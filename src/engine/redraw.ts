@@ -6,25 +6,14 @@ import type {
 } from '../types/game'
 import { rankCards } from './evaluate'
 
-function combinations<T>(items: T[], count: number): T[][] {
-  if (count <= 0) return [[]]
-  if (count > items.length) return []
-  const output: T[][] = []
-
-  const walk = (start: number, current: T[]) => {
-    if (current.length === count) {
-      output.push([...current])
-      return
-    }
-    for (let index = start; index <= items.length - (count - current.length); index += 1) {
-      current.push(items[index])
-      walk(index + 1, current)
-      current.pop()
-    }
+function binomial(total: number, selected: number): number {
+  if (selected < 0 || selected > total) return 0
+  const count = Math.min(selected, total - selected)
+  let result = 1
+  for (let index = 1; index <= count; index += 1) {
+    result = (result * (total - count + index)) / index
   }
-
-  walk(0, [])
-  return output
+  return Math.round(result)
 }
 
 export function estimateRedraw(
@@ -35,33 +24,45 @@ export function estimateRedraw(
   currentBest: number,
 ): RedrawEstimate {
   const actualCount = Math.min(drawCount, pool.length)
-  const hands = combinations(pool, actualCount)
-  const scoreByCardId = new Map(
-    rankCards(state, pool, persistent).map((result) => [result.card.id, result.score]),
-  )
-  const bestValues = hands.map((hand) => hand.reduce(
-    (best, card) => Math.max(best, scoreByCardId.get(card.id) ?? currentBest),
-    currentBest,
-  ))
-  const expectedBest =
-    bestValues.reduce((sum, value) => sum + value, 0) / Math.max(1, bestValues.length)
-  const improved = bestValues.filter((value) => value > currentBest).length
-  const minimumBest = bestValues.reduce(
-    (minimum, value) => Math.min(minimum, value),
-    Number.POSITIVE_INFINITY,
-  )
-  const maximumBest = bestValues.reduce(
-    (maximum, value) => Math.max(maximum, value),
-    Number.NEGATIVE_INFINITY,
-  )
+  if (actualCount === 0) {
+    return {
+      drawCount,
+      expectedBest: currentBest,
+      expectedDelta: 0,
+      improveProbability: 0,
+      minimumBest: currentBest,
+      maximumBest: currentBest,
+      sampleCount: 1,
+    }
+  }
+
+  const sortedScores = rankCards(state, pool, persistent)
+    .map((result) => result.score)
+    .sort((left, right) => left - right)
+  const sampleCount = binomial(sortedScores.length, actualCount)
+  let weightedBestTotal = 0
+  let improvedHands = 0
+
+  // 对有序分数中的第 i 张牌，它作为一手牌最大下标出现的组合数是 C(i, k - 1)。
+  // 这样可精确计算所有不重复抽取的最大值分布，无需创建 C(n, k) 个牌组。
+  for (let index = actualCount - 1; index < sortedScores.length; index += 1) {
+    const handCount = binomial(index, actualCount - 1)
+    const best = Math.max(currentBest, sortedScores[index])
+    weightedBestTotal += best * handCount
+    if (best > currentBest) improvedHands += handCount
+  }
+
+  const expectedBest = weightedBestTotal / sampleCount
+  const minimumBest = Math.max(currentBest, sortedScores[actualCount - 1])
+  const maximumBest = Math.max(currentBest, sortedScores.at(-1) ?? currentBest)
 
   return {
     drawCount,
     expectedBest,
     expectedDelta: expectedBest - currentBest,
-    improveProbability: improved / Math.max(1, bestValues.length),
+    improveProbability: improvedHands / sampleCount,
     minimumBest,
     maximumBest,
-    sampleCount: bestValues.length,
+    sampleCount,
   }
 }

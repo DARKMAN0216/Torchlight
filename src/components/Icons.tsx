@@ -68,6 +68,15 @@ export function SettingsIcon(props: IconProps) {
   )
 }
 
+export function ScanIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3" />
+      <path d="M7 12h10M12 7v10" />
+    </svg>
+  )
+}
+
 export function ChevronIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>

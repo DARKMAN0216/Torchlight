@@ -1,0 +1,403 @@
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+from rapidocr import RapidOCR
+
+
+REGIONS = {
+    "round": (0.041, 0.348, 0.068, 0.065),
+    "final_activity": (0.039, 0.439, 0.073, 0.041),
+    "selection": (0.285, 0.620, 0.485, 0.330),
+}
+
+MONSTER_SUMMARIES = [
+    (0.165, 0.342, 0.112, 0.080),
+    (0.301, 0.342, 0.112, 0.080),
+    (0.438, 0.342, 0.112, 0.080),
+    (0.574, 0.342, 0.112, 0.080),
+    (0.711, 0.342, 0.112, 0.080),
+    (0.847, 0.342, 0.112, 0.080),
+]
+
+MONSTER_RACES = {
+    "红斑金鱼": "swarm",
+    "巡察卫兵": "construct",
+    "禁典学者": "awakened",
+    "邪眼翼兽": "aberrant",
+    "蝙兽": "aberrant",
+    "蝎兽": "aberrant",
+}
+
+PHASE_WORDS = (
+    ("手术方案", "surgeryPlanSelection"),
+    ("手术用具", "surgeryRewardSelection"),
+    ("药剂", "potionSelection"),
+)
+
+
+@dataclass(frozen=True)
+class OcrLine:
+    text: str
+    confidence: float
+    box: list[list[float]]
+
+    @property
+    def center_x(self) -> float:
+        return sum(point[0] for point in self.box) / len(self.box)
+
+    @property
+    def center_y(self) -> float:
+        return sum(point[1] for point in self.box) / len(self.box)
+
+
+def pixel_region(region: tuple[float, float, float, float], width: int, height: int) -> tuple[int, int, int, int]:
+    x, y, region_width, region_height = region
+    return (
+        round(x * width),
+        round(y * height),
+        round(region_width * width),
+        round(region_height * height),
+    )
+
+
+def crop(image: np.ndarray, region: tuple[float, float, float, float]) -> tuple[np.ndarray, tuple[int, int]]:
+    height, width = image.shape[:2]
+    x, y, region_width, region_height = pixel_region(region, width, height)
+    return image[y:y + region_height, x:x + region_width], (x, y)
+
+
+def result_lines(result: Any, offset: tuple[int, int] = (0, 0)) -> list[OcrLine]:
+    boxes = getattr(result, "boxes", None)
+    texts = getattr(result, "txts", None)
+    scores = getattr(result, "scores", None)
+
+    if boxes is None and isinstance(result, (tuple, list)) and len(result) >= 2:
+        raw = result[0] or []
+        boxes = [item[0] for item in raw]
+        texts = [item[1] for item in raw]
+        scores = [item[2] for item in raw]
+
+    if boxes is None or texts is None:
+        return []
+
+    x_offset, y_offset = offset
+    score_values = scores if scores is not None else [0.0] * len(texts)
+    lines: list[OcrLine] = []
+    for box, text, score in zip(boxes, texts, score_values):
+        if not text:
+            continue
+        shifted = [[float(point[0]) + x_offset, float(point[1]) + y_offset] for point in box]
+        lines.append(OcrLine(str(text).strip(), float(score), shifted))
+    return lines
+
+
+def recognized(value: Any, confidence: float, region: tuple[float, float, float, float], width: int, height: int) -> dict[str, Any]:
+    x, y, region_width, region_height = pixel_region(region, width, height)
+    return {
+        "value": value,
+        "confidence": round(max(0.0, min(1.0, confidence)), 4),
+        "sourceRegion": {"x": x, "y": y, "width": region_width, "height": region_height},
+    }
+
+
+def digits(text: str) -> list[int]:
+    return [int(value) for value in re.findall(r"\d+", text.replace(",", ""))]
+
+
+def first_number(lines: list[OcrLine], maximum: int | None = None) -> tuple[int, float] | None:
+    candidates: list[tuple[int, float]] = []
+    for line in lines:
+        for value in digits(line.text):
+            if maximum is None or value <= maximum:
+                candidates.append((value, line.confidence))
+    return candidates[0] if candidates else None
+
+
+def normalized_text(text: str) -> str:
+    return re.sub(r"[\s·,，。:：/|]", "", text)
+
+
+class GameRecognizer:
+    def __init__(self) -> None:
+        self.engine = RapidOCR()
+
+    @staticmethod
+    def lines_in_region(
+        lines: list[OcrLine],
+        region: tuple[float, float, float, float],
+        width: int,
+        height: int,
+    ) -> list[OcrLine]:
+        x, y, region_width, region_height = pixel_region(region, width, height)
+        return [
+            line for line in lines
+            if x <= line.center_x <= x + region_width and y <= line.center_y <= y + region_height
+        ]
+
+    def recognize(self, image: np.ndarray, source: str) -> dict[str, Any]:
+        started = time.perf_counter()
+        height, width = image.shape[:2]
+        issues: list[str] = []
+
+        # 单次全图推理后按固定区域筛选，避免对 9 个小区域重复运行检测模型。
+        all_lines = result_lines(self.engine(image))
+        round_lines = self.lines_in_region(all_lines, REGIONS["round"], width, height)
+        final_lines = self.lines_in_region(all_lines, REGIONS["final_activity"], width, height)
+        selection_lines = self.lines_in_region(all_lines, REGIONS["selection"], width, height)
+        monster_lines = [
+            self.lines_in_region(all_lines, region, width, height)
+            for region in MONSTER_SUMMARIES
+        ]
+
+        round_value = None
+        total_rounds = None
+        round_confidence = 0.0
+        round_text = " ".join(line.text for line in round_lines)
+        round_match = re.search(r"(\d{1,2})\s*[/|]\s*(\d{1,2})", round_text)
+        if round_match:
+            round_value = int(round_match.group(1))
+            total_rounds = int(round_match.group(2))
+            round_confidence = min((line.confidence for line in round_lines), default=0.0)
+        else:
+            values = [value for line in round_lines for value in digits(line.text) if value <= 99]
+            if len(values) >= 2:
+                round_value, total_rounds = values[:2]
+                round_confidence = min((line.confidence for line in round_lines), default=0.0) * 0.85
+            else:
+                issues.append("未可靠识别回合数")
+
+        final_result = first_number(final_lines)
+        if final_result is None:
+            issues.append("未可靠识别最终活性")
+
+        monster_slots: list[dict[str, Any]] = []
+        for index, (region, lines) in enumerate(zip(MONSTER_SUMMARIES, monster_lines), start=1):
+            joined = " ".join(line.text for line in lines)
+            pair_line = next(
+                (
+                    line for line in lines
+                    if re.search(r"\d+\s*[×xX]\s*\d+", line.text.replace(",", ""))
+                ),
+                None,
+            )
+            pair_match = (
+                re.search(r"(\d+)\s*[×xX]\s*(\d+)", pair_line.text.replace(",", ""))
+                if pair_line else None
+            )
+            known_name = next((name for name in MONSTER_RACES if name in joined), None)
+            confidence = max((line.confidence for line in lines), default=0.0)
+            occupied = pair_match is not None or known_name is not None
+            slot: dict[str, Any] = {
+                "slotId": f"slot-{index}",
+                "occupied": recognized(occupied, confidence if occupied else 0.86, region, width, height),
+            }
+            if known_name:
+                name_confidence = max((line.confidence for line in lines if known_name in line.text), default=confidence)
+                slot["name"] = recognized(known_name, name_confidence, region, width, height)
+                slot["raceId"] = recognized(MONSTER_RACES[known_name], name_confidence * 0.95, region, width, height)
+            if pair_match:
+                unit_activity = int(pair_match.group(1))
+                quantity = int(pair_match.group(2))
+                pair_confidence = pair_line.confidence if pair_line else confidence
+                slot["unitActivity"] = recognized(unit_activity, pair_confidence, region, width, height)
+                slot["quantity"] = recognized(quantity, pair_confidence, region, width, height)
+                slot["displayedTotalActivity"] = recognized(unit_activity * quantity, pair_confidence * 0.96, region, width, height)
+            monster_slots.append(slot)
+
+        selection_text = " ".join(line.text for line in selection_lines)
+        phase = "unknown"
+        for word, phase_id in PHASE_WORDS:
+            if word in selection_text:
+                phase = phase_id
+                break
+
+        candidate_lines = self._candidate_title_lines(selection_lines, width, height)
+        candidate_names = [
+            recognized(line.text, line.confidence, REGIONS["selection"], width, height)
+            for line in candidate_lines
+        ]
+        if phase == "potionSelection" and len(candidate_names) >= 5:
+            phase = "expandedPotionSelection"
+        if not candidate_names:
+            issues.append("未可靠识别候选卡名称")
+
+        snapshot: dict[str, Any] = {
+            "capturedAt": datetime.now(timezone.utc).isoformat(),
+            "sourceImage": {"width": width, "height": height, "layoutProfileId": "normalized-16x9-v1"},
+            "phase": recognized(phase, 0.9 if phase != "unknown" else 0.2, REGIONS["selection"], width, height),
+            "candidateCardIds": [],
+            "candidateCardNames": candidate_names,
+            "monsterSlots": monster_slots,
+        }
+        if round_value is not None:
+            snapshot["round"] = recognized(round_value, round_confidence, REGIONS["round"], width, height)
+        if total_rounds is not None:
+            snapshot["totalRounds"] = recognized(total_rounds, round_confidence, REGIONS["round"], width, height)
+        if final_result is not None:
+            snapshot["displayedFinalActivity"] = recognized(final_result[0], final_result[1], REGIONS["final_activity"], width, height)
+
+        arithmetic_total = sum(
+            slot.get("displayedTotalActivity", {}).get("value", 0)
+            for slot in monster_slots
+        )
+        if final_result and arithmetic_total and final_result[0] != arithmetic_total:
+            issues.append(f"槽位合计 {arithmetic_total} 与界面最终活性 {final_result[0]} 不一致")
+
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+        return {
+            "snapshot": snapshot,
+            "diagnostics": {
+                "source": source,
+                "latencyMs": elapsed_ms,
+                "issues": issues,
+                "ocrLines": [
+                    {"text": line.text, "confidence": round(line.confidence, 4), "center": [round(line.center_x, 1), round(line.center_y, 1)]}
+                    for line in [*round_lines, *final_lines, *selection_lines, *(item for lines in monster_lines for item in lines)]
+                ],
+            },
+        }
+
+    @staticmethod
+    def _candidate_title_lines(lines: list[OcrLine], width: int, height: int) -> list[OcrLine]:
+        candidates = [
+            line for line in lines
+            if 0.72 <= line.center_y / height <= 0.84
+            and 0.30 <= line.center_x / width <= 0.75
+            and 2 <= len(normalized_text(line.text)) <= 14
+            and not any(word in line.text for word in ("选择一种", "普通药剂", "魔法药剂", "稀有药剂", "手术用具", "数量", "活性"))
+        ]
+        if not candidates:
+            return []
+
+        five_card_layout = min(line.center_x / width for line in candidates) < 0.40
+        centers = [0.35, 0.44, 0.526, 0.61, 0.697] if five_card_layout else [0.466, 0.553, 0.639]
+        output: list[OcrLine] = []
+        for center in centers:
+            nearby = [line for line in candidates if abs(line.center_x / width - center) <= 0.065]
+            if nearby:
+                output.append(min(nearby, key=lambda line: (line.center_y, -line.confidence)))
+        return output
+
+
+def decode_image(data: bytes) -> np.ndarray:
+    encoded = np.frombuffer(data, dtype=np.uint8)
+    image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError("无法解码上传的图片")
+    return image
+
+
+def capture_primary_monitor() -> np.ndarray:
+    from mss import mss
+
+    with mss() as capture:
+        monitor = capture.monitors[1]
+        shot = np.asarray(capture.grab(monitor))
+    return cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
+
+
+class RecognitionHandler(BaseHTTPRequestHandler):
+    recognizer: GameRecognizer
+
+    def _allowed_origin(self) -> str | None:
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return None
+        return origin if re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):\d+", origin) else ""
+
+    def _send(self, status: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        allowed_origin = self._allowed_origin()
+        if allowed_origin:
+            self.send_header("Access-Control-Allow-Origin", allowed_origin)
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_OPTIONS(self) -> None:
+        if self._allowed_origin() == "":
+            self._send(403, {"error": "origin not allowed"})
+            return
+        self._send(204, {})
+
+    def do_GET(self) -> None:
+        if self._allowed_origin() == "":
+            self._send(403, {"error": "origin not allowed"})
+            return
+        if self.path == "/health":
+            self._send(200, {"ok": True, "service": "vorax-local-recognizer"})
+            return
+        self._send(404, {"error": "not found"})
+
+    def do_POST(self) -> None:
+        if self._allowed_origin() == "":
+            self._send(403, {"error": "origin not allowed"})
+            return
+        if self.path == "/capture-recognize":
+            try:
+                self._send(200, self.recognizer.recognize(capture_primary_monitor(), "primary-monitor"))
+            except Exception as error:  # noqa: BLE001
+                self._send(500, {"error": str(error)})
+            return
+        if self.path != "/recognize":
+            self._send(404, {"error": "not found"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0 or length > 25 * 1024 * 1024:
+                raise ValueError("图片为空或超过 25 MB")
+            image = decode_image(self.rfile.read(length))
+            self._send(200, self.recognizer.recognize(image, "uploaded-image"))
+        except Exception as error:  # noqa: BLE001
+            self._send(400, {"error": str(error)})
+
+    def log_message(self, format: str, *args: Any) -> None:
+        sys.stdout.write(f"[recognizer] {self.address_string()} {format % args}\n")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="渴瘾决策器本地屏幕识别服务")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=28765)
+    parser.add_argument("--image", type=Path, help="识别单张图片并输出 JSON，不启动服务")
+    args = parser.parse_args()
+
+    recognizer = GameRecognizer()
+    if args.image:
+        image = cv2.imread(str(args.image))
+        if image is None:
+            raise SystemExit(f"无法读取图片：{args.image}")
+        print(json.dumps(recognizer.recognize(image, str(args.image)), ensure_ascii=False, indent=2))
+        return
+
+    RecognitionHandler.recognizer = recognizer
+    server = ThreadingHTTPServer((args.host, args.port), RecognitionHandler)
+    print(f"渴瘾屏幕识别服务：http://{args.host}:{args.port}")
+    print("保持本窗口运行，然后在网页中点击“识别屏幕”。")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

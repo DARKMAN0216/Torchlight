@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   candidateCards,
   initialCandidateIds,
@@ -11,11 +11,14 @@ import { applyOpportunityPolicy } from './engine/opportunity'
 import { persistentCardsIn, persistentLoadoutName } from './engine/persistent'
 import { hasEligibleTargetSet, targetIsDisabled, targetSetIsValid } from './engine/targeting'
 import { CandidateCardView } from './components/CandidateCardView'
-import { FlaskIcon, AddIcon, BookIcon, SaveIcon, SettingsIcon, UndoIcon } from './components/Icons'
+import { FlaskIcon, AddIcon, BookIcon, SaveIcon, ScanIcon, SettingsIcon, UndoIcon } from './components/Icons'
 import { CardCatalogDialog } from './components/CardCatalogDialog'
 import { RecommendationPanel } from './components/RecommendationPanel'
 import { RedrawStrip } from './components/RedrawStrip'
 import { StatePanel } from './components/StatePanel'
+import { localScreenRecognitionProvider } from './recognition/localBridge'
+import { mergeRecognitionSnapshot } from './recognition/merge'
+import type { RecognitionSnapshot } from './recognition/contracts'
 import {
   raceIds,
   type CandidateCard,
@@ -241,7 +244,9 @@ function App() {
     () => saved?.rerollsRemaining ?? 3,
   )
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [status, setStatus] = useState('手动输入模式 · 屏幕识别接口已预留')
+  const [status, setStatus] = useState('屏幕识别版 · 启动本地识别服务后可自动回填')
+  const [recognitionBusy, setRecognitionBusy] = useState(false)
+  const recognitionFileInput = useRef<HTMLInputElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null)
@@ -708,15 +713,106 @@ function App() {
     })
   }
 
+  const applyRecognition = (snapshot: RecognitionSnapshot) => {
+    const result = mergeRecognitionSnapshot(
+      state,
+      candidateIds,
+      offerCount,
+      snapshot,
+      candidateCards,
+    )
+    const changed = result.appliedFieldCount > 0 || result.matchedCandidateCount > 0
+    if (changed) {
+      setHistory((current) => [...current, {
+        state,
+        awaitingEndRound,
+        candidateIds,
+        offerCount,
+        rerollsRemaining,
+      }])
+      setState(result.state)
+      setCandidateIds(result.candidateIds)
+      setOfferCount(result.offerCount)
+      setPendingResolution(null)
+      setSelectedMonsterIds([])
+      setObservedRaceByMonsterId({})
+      setObservedNewGroupRaces([])
+      resetObservedResolution()
+    }
+
+    const latency = snapshot.diagnostics?.latencyMs
+      ? ` · ${Math.round(snapshot.diagnostics.latencyMs)} ms`
+      : ''
+    const warning = result.warnings.length > 0
+      ? ` · ${result.warnings[0]}`
+      : ''
+    setStatus(
+      `识别完成：回填 ${result.appliedFieldCount} 个状态字段，匹配 ${result.matchedCandidateCount} 张候选${latency}${warning}`,
+    )
+  }
+
+  const recognizeScreen = async () => {
+    if (recognitionBusy) return
+    setRecognitionBusy(true)
+    setStatus('正在截取主屏幕并进行本地识别…')
+    try {
+      if (!await localScreenRecognitionProvider.isAvailable()) {
+        throw new Error('本地识别服务未启动，请先运行 .\\scripts\\start-recognition.ps1')
+      }
+      applyRecognition(await localScreenRecognitionProvider.captureAndRecognize())
+    } catch (error) {
+      setStatus(`识别失败：${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      setRecognitionBusy(false)
+    }
+  }
+
+  const recognizeImage = async (file: File) => {
+    if (recognitionBusy) return
+    setRecognitionBusy(true)
+    setStatus(`正在识别截图“${file.name}”…`)
+    try {
+      if (!await localScreenRecognitionProvider.isAvailable()) {
+        throw new Error('本地识别服务未启动，请先运行 .\\scripts\\start-recognition.ps1')
+      }
+      applyRecognition(await localScreenRecognitionProvider.recognizeImage(file))
+    } catch (error) {
+      setStatus(`识别失败：${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      setRecognitionBusy(false)
+      if (recognitionFileInput.current) recognitionFileInput.current.value = ''
+    }
+  }
+
   return (
     <div className="app-shell">
       <header className="app-bar">
         <div className="brand">
           <FlaskIcon />
           <span>渴瘾决策器</span>
-          <em>手输原型</em>
+          <em>本地识别版</em>
         </div>
         <nav aria-label="牌局操作">
+          <button type="button" onClick={recognizeScreen} disabled={recognitionBusy}>
+            <ScanIcon /> {recognitionBusy ? '识别中…' : '识别屏幕'}
+          </button>
+          <button
+            type="button"
+            onClick={() => recognitionFileInput.current?.click()}
+            disabled={recognitionBusy}
+          >
+            导入截图
+          </button>
+          <input
+            ref={recognitionFileInput}
+            className="visually-hidden"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0]
+              if (file) void recognizeImage(file)
+            }}
+          />
           <button type="button" onClick={startNewGame}>
             <AddIcon /> 新牌局
           </button>
@@ -738,6 +834,7 @@ function App() {
       {settingsOpen && (
         <div className="settings-banner">
           <strong>当前估算假设</strong>
+          <span>屏幕识别：先运行 .\scripts\start-recognition.ps1；“识别屏幕”读取主显示器，“导入截图”可识别已保存图片。</span>
           <span>当前常驻组合：{persistentLoadoutName(persistentLoadout)}。手术用具按追加关系共同参与评分。</span>
           <span>重抽来自完整示例牌库、等概率、同一批不重复。真实规则录入后可替换。</span>
           <span>战略基础权重：每个有效怪物组 +6；魔法/稀有/首领分别 +8/+20/+36；常驻卡成型条件使用独立协同权重。</span>

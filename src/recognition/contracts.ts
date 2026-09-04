@@ -47,6 +47,11 @@ export interface RecognitionSnapshot {
   monsterSlots?: RecognizedMonsterSlot[]
   candidateCardIds: Array<RecognizedValue<string>>
   candidateCardNames?: Array<RecognizedValue<string>>
+  diagnostics?: {
+    latencyMs?: number
+    source?: string
+    issues: string[]
+  }
 }
 
 export interface ScreenRecognitionProvider {

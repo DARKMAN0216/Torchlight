@@ -3,3 +3,5 @@ dist/
 .vite/
 *.log
 *.local
+.venv-recognition/
+recognizer/__pycache__/

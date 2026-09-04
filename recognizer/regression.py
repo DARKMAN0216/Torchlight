@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import cv2
+
+from server import GameRecognizer
+
+
+SAMPLES = {
+    "round-1-before-birth-bone-powder-1920x1080.png": (1, 720, 4, 3),
+    "round-4-large-potion-box-expanded-1920x1080.png": (4, 16650, 2, 5),
+    "round-10-current-checkpoint-1920x1080.png": (10, 425722, 1, 3),
+    "round-11-surgery-plan-selection-1920x1080.png": (11, 463722, 1, 3),
+}
+
+
+def main() -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    references = project_root / "design" / "references"
+    recognizer = GameRecognizer()
+    failed = False
+
+    for filename, expected in SAMPLES.items():
+        image = cv2.imread(str(references / filename))
+        if image is None:
+            print(f"FAIL {filename}: 无法读取图片")
+            failed = True
+            continue
+        payload = recognizer.recognize(image, filename)
+        snapshot = payload["snapshot"]
+        actual = (
+            snapshot.get("round", {}).get("value"),
+            snapshot.get("displayedFinalActivity", {}).get("value"),
+            sum(1 for slot in snapshot["monsterSlots"] if slot["occupied"]["value"]),
+            len(snapshot.get("candidateCardNames", [])),
+        )
+        ok = actual == expected and not payload["diagnostics"]["issues"]
+        print(
+            f"{'PASS' if ok else 'FAIL'} {filename}: "
+            f"round={actual[0]}, activity={actual[1]}, groups={actual[2]}, cards={actual[3]}, "
+            f"{payload['diagnostics']['latencyMs']} ms"
+        )
+        if not ok:
+            print(f"  expected={expected}; issues={payload['diagnostics']['issues']}")
+            failed = True
+
+    raise SystemExit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()

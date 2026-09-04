@@ -97,6 +97,16 @@ select:focus-visible {
 .app-bar nav button:hover { background: var(--surface-2); color: #fff; }
 .app-bar nav button:disabled { opacity: .35; cursor: not-allowed; }
 
+.visually-hidden {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .settings-banner {
   display: flex;
   align-items: center;
