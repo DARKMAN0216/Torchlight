@@ -70,6 +70,11 @@ export function CandidateCardView({
       {result.warnings.length > 0 && (!card.targeting || pending) && (
         <div className="card-warning">{result.warnings.join('，')}</div>
       )}
+      {card.modelCoverage && card.modelCoverage !== 'confirmed' && (
+        <div className="card-warning">
+          {card.modelCoverage === 'partial' ? '部分建模' : '规则待确认'}：{card.modelWarning}
+        </div>
+      )}
       <button className="card-apply-button" type="button" disabled={disabled} onClick={onApply}>
         {disabled
           ? '等待回合结束结算'

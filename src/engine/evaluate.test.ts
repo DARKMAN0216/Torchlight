@@ -61,7 +61,7 @@ describe('rule engine', () => {
       totalActivity(initialState),
     )
 
-    expect(estimate.sampleCount).toBe(237336)
+    expect(estimate.sampleCount).toBe(324632)
     expect(Number.isFinite(estimate.minimumBest)).toBe(true)
     expect(Number.isFinite(estimate.maximumBest)).toBe(true)
   })
@@ -685,5 +685,56 @@ describe('rule engine', () => {
     expect(ranking[0].recommendedTargetIds).toEqual(['slot-1'])
     expect(ranking[0].activityAfter).toBe(318780)
     expect(ranking[0].trace).toContain('所选怪物左侧没有培养皿，不移除怪物')
+  })
+
+  it('keeps the round-ten recommendation conservative when two alternatives are incomplete', () => {
+    const state = {
+      round: 10,
+      mode: 'strategic' as const,
+      monsters: [
+        { id: 'slot-1', race: 'aberrant' as const, rarity: 'common' as const, quantity: 814, unitActivity: 523 },
+        { id: 'slot-2', race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 },
+        { id: 'slot-3', race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 },
+        { id: 'slot-4', race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 },
+        { id: 'slot-5', race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 },
+        { id: 'slot-6', race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 },
+      ],
+    }
+    const loadout = persistentCards.filter((item) =>
+      ['contracted-claw', 'writhing-spinal', 'dirty-bone-scraper'].includes(item.id),
+    )
+    const offered = candidateCards.filter((card) => [
+      'birth-bone-powder',
+      'twin-hormone-swarm',
+      'mixed-live-leech-solution',
+    ].includes(card.id))
+    const ranking = rankCards(state, offered, loadout)
+
+    expect(offered).toHaveLength(3)
+    expect(ranking[0].card.id).toBe('birth-bone-powder')
+    expect(ranking[0].activityAfter).toBe(446642)
+    expect(ranking[0].analysis).toContainEqual(expect.stringContaining('回合结束转移收益 +17080'))
+
+    const twin = ranking.find((result) => result.card.id === 'twin-hormone-swarm')!
+    expect(twin.card.modelCoverage).toBe('partial')
+    expect(twin.state.monsters[0].race).toBe('swarm')
+    expect(twin.activityAfter).toBe(425722)
+    expect(twin.trace).toContainEqual(expect.stringContaining('新增同名组'))
+
+    const mixed = ranking.find((result) => result.card.id === 'mixed-live-leech-solution')!
+    expect(mixed.card.modelCoverage).toBe('unresolved')
+    expect(mixed.activityAfter).toBe(425722)
+    expect(mixed.trace).toContainEqual(expect.stringContaining('暂按 0 已确认收益'))
+
+    const scraper = loadout.find((card) => card.id === 'dirty-bone-scraper')!
+    const final = evaluateCard(ranking[0].state, {
+      id: 'round-end:dirty-bone-scraper',
+      name: '脏污刮骨刀·回合结束',
+      rarity: 3,
+      description: scraper.roundEndEffect!.description,
+      tags: ['常驻卡', '回合结束'],
+      effects: scraper.roundEndEffect!.effects,
+    }, loadout)
+    expect(final.activityAfter).toBe(463722)
   })
 })

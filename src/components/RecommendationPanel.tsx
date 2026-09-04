@@ -10,13 +10,19 @@ interface RecommendationPanelProps {
 export function RecommendationPanel({ ranking, onApply, disabled = false }: RecommendationPanelProps) {
   const best = ranking[0]
   if (!best) return null
+  const incompleteCards = ranking.filter((item) =>
+    item.card.modelCoverage && item.card.modelCoverage !== 'confirmed',
+  )
+  const isConservativeRecommendation = incompleteCards.length > 0
 
   return (
     <aside className="panel recommendation-panel">
       <div className="panel-heading">
         <div>
           <h2>推荐结果</h2>
-          <p>基于当前状态的局部最优</p>
+          <p>{isConservativeRecommendation
+            ? '基于已确认效果的保守最优'
+            : '基于当前状态的局部最优'}</p>
         </div>
       </div>
 
@@ -69,9 +75,11 @@ export function RecommendationPanel({ ranking, onApply, disabled = false }: Reco
         <WarningIcon />
         <div>
           <strong>{best.scoreLabel === '战略评分' ? '实验性战略模型' : '示例规则库'}</strong>
-          <p>{best.scoreLabel === '战略评分'
-            ? '把当前活性、阵容完整度、稀有度潜力、常驻卡成型条件与可确认的回合结束转移收益合并评分；权重仍需实战校准。'
-            : '当前卡名与数值用于验证软件流程，尚不是完整游戏卡库。'}</p>
+          <p>{isConservativeRecommendation
+            ? `本轮含未完整建模卡牌：${incompleteCards.map((item) => item.card.name).join('、')}。当前推荐只比较已确认收益，不代表未知机制全部揭示后的全信息最优。`
+            : best.scoreLabel === '战略评分'
+              ? '把当前活性、阵容完整度、稀有度潜力、常驻卡成型条件与可确认的回合结束转移收益合并评分；权重仍需实战校准。'
+              : '当前卡名与数值用于验证软件流程，尚不是完整游戏卡库。'}</p>
         </div>
       </div>
     </aside>

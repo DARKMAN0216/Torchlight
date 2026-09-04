@@ -225,6 +225,7 @@ export interface CandidateCard {
   resolutionObservation?: ResolutionObservation
   rankObservedRandom?: 'conservative'
   followUpOfferCount?: 3 | 5
+  modelCoverage?: 'confirmed' | 'partial' | 'unresolved'
   modelWarning?: string
 }
 

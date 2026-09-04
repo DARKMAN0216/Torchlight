@@ -31,6 +31,7 @@ const legacyV2StorageKey = 'vorax-decision-assistant-state-v2'
 const legacyStorageKey = 'vorax-decision-assistant-state-v1'
 const candidateCardById = new Map(candidateCards.map((card) => [card.id, card]))
 const persistentCardById = new Map(persistentCards.map((card) => [card.id, card]))
+const mappedRealCardCount = candidateCards.filter((card) => card.tags.includes('真实卡牌')).length
 
 interface SavedWorkspace {
   state: GameState
@@ -851,7 +852,7 @@ function App() {
 
       <footer className="status-bar">
         <span><i />{status}</span>
-        <span>真实卡库：84 张已载入 · 22 张候选卡已映射 · 多常驻战略模型已启用</span>
+        <span>真实卡库：84 张已载入 · {mappedRealCardCount} 张候选卡已映射 · 多常驻战略模型已启用</span>
       </footer>
     </div>
   )

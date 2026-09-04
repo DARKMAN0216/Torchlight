@@ -185,4 +185,18 @@ describe('observed gameplay run', () => {
     expect(step.after.monsters[0]).toMatchObject({ quantity: 814, unitActivity: 523 })
     expect(totalActivity(step.after)).toBe(425722)
   })
+
+  it('maps all three cards currently shown in the round-ten offer', () => {
+    const offer = observedPotionOffers.at(-1)!
+    const mapped = offer.offeredCardNames.map((name) =>
+      candidateCards.find((card) => card.name === name),
+    )
+
+    expect(mapped.every(Boolean)).toBe(true)
+    expect(mapped.map((card) => card!.modelCoverage ?? 'confirmed')).toEqual([
+      'confirmed',
+      'partial',
+      'unresolved',
+    ])
+  })
 })
