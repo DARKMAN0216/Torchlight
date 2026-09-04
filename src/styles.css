@@ -291,6 +291,65 @@ select:focus-visible {
   line-height: 1.4;
 }
 
+.floating-dashboard {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+}
+.floating-panel {
+  width: 100%;
+  display: grid;
+  gap: 13px;
+  padding: 14px;
+  border: 1px solid #68502a;
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(circle at 85% 0, rgba(223, 165, 62, .12), transparent 42%),
+    linear-gradient(145deg, #1d2325, #111618);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .45);
+}
+.floating-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.floating-heading > div { display: grid; gap: 4px; }
+.floating-heading span { color: var(--muted); font-size: 10px; }
+.floating-heading strong { color: #f0e7d4; font-size: 14px; }
+.floating-heading .recognition-indicator { margin-left: 0; }
+.floating-recommendation {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid #4c4231;
+  border-radius: var(--radius-sm);
+  background: rgba(9, 13, 14, .46);
+}
+.floating-recommendation > span { color: var(--accent); font-size: 10px; }
+.floating-recommendation strong { color: #f6d58b; font-size: 18px; }
+.floating-recommendation b { color: #78ca94; font-size: 13px; }
+.floating-recommendation p,
+.floating-panel small { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.floating-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.floating-actions button:not(.primary-button) {
+  border: 1px solid #465054;
+  border-radius: var(--radius-sm);
+  background: #242b2e;
+  cursor: pointer;
+}
+.floating-mode .app-bar {
+  min-height: 45px;
+  padding: 0 10px;
+}
+.floating-mode .brand { font-size: 14px; }
+.floating-mode .brand em { display: none; }
+.floating-mode .app-bar nav button,
+.floating-mode .app-bar nav .recognition-indicator { display: none; }
+.floating-mode .app-bar nav .floating-toggle { display: flex; padding: 0 10px; }
+.floating-mode .status-bar { display: none; }
+
 .persistent-offer-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import {
   candidateCards,
   initialCandidateIds,
@@ -249,6 +250,8 @@ function App() {
   const [recognitionBusy, setRecognitionBusy] = useState(false)
   const [recognitionServiceOnline, setRecognitionServiceOnline] = useState<boolean | null>(null)
   const [persistentOffers, setPersistentOffers] = useState<PersistentOffer[]>([])
+  const [floatingMode, setFloatingMode] = useState(false)
+  const floatingPreviousSize = useRef<{ width: number; height: number } | null>(null)
   const recognitionFileInput = useRef<HTMLInputElement>(null)
   const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot) => void>(() => {})
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -390,6 +393,34 @@ function App() {
     resetObservedResolution()
     setAwaitingEndRound(false)
     setStatus('已新建牌局，当前使用示例数据')
+  }
+
+  const toggleFloatingMode = async () => {
+    try {
+      const appWindow = getCurrentWindow()
+      if (!floatingMode) {
+        const currentSize = await appWindow.innerSize()
+        floatingPreviousSize.current = { width: currentSize.width, height: currentSize.height }
+        await appWindow.setMinSize(new LogicalSize(360, 280))
+        await appWindow.setSize(new LogicalSize(430, 340))
+        await appWindow.setAlwaysOnTop(true)
+        setFloatingMode(true)
+        setStatus('浮窗已置顶：切回游戏后仍会显示 F8 识别与当前推荐')
+        return
+      }
+
+      await appWindow.setAlwaysOnTop(false)
+      await appWindow.setMinSize(new LogicalSize(1080, 680))
+      const previousSize = floatingPreviousSize.current
+      await appWindow.setSize(new LogicalSize(
+        previousSize?.width ?? 1440,
+        previousSize?.height ?? 920,
+      ))
+      setFloatingMode(false)
+      setStatus('已退出浮窗模式')
+    } catch {
+      setStatus('浮窗模式仅能在已安装的桌面客户端中使用；网页预览不支持置顶窗口')
+    }
   }
 
   const pendingCard = pendingResolution?.kind === 'candidate'
@@ -856,7 +887,7 @@ function App() {
   }, [])
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${floatingMode ? 'floating-mode' : ''}`}>
       <header className="app-bar">
         <div className="brand">
           <FlaskIcon />
@@ -899,6 +930,9 @@ function App() {
           <button type="button" onClick={() => setSettingsOpen((value) => !value)}>
             <SettingsIcon /> 设置
           </button>
+          <button className="floating-toggle" type="button" onClick={() => void toggleFloatingMode()} title="缩小并置顶显示当前推荐">
+            {floatingMode ? '退出浮窗' : '开启浮窗'}
+          </button>
           <span className={`recognition-indicator ${recognitionServiceOnline === true ? 'online' : 'offline'}`}>
             {recognitionServiceOnline === true ? 'F8 识别已就绪' : 'F8 识别服务未连接'}
           </span>
@@ -919,6 +953,44 @@ function App() {
 
       {catalogOpen && <CardCatalogDialog onClose={() => setCatalogOpen(false)} />}
 
+      {floatingMode ? (
+        <main className="floating-dashboard">
+          <section className="floating-panel">
+            <div className="floating-heading">
+              <div>
+                <span>渴瘾决策器 · 游戏浮窗</span>
+                <strong>第 {state.round} 回合 · 当前活性 {totalActivity(state)}</strong>
+              </div>
+              <span className={`recognition-indicator ${recognitionServiceOnline === true ? 'online' : 'offline'}`}>
+                {recognitionServiceOnline === true ? 'F8 已就绪' : '服务未连接'}
+              </span>
+            </div>
+            {persistentOffers.length > 0 ? (
+              <div className="floating-recommendation">
+                <span>检测到常驻手术用具</span>
+                <strong>{persistentOffers.map((offer) => offer.name).join(' · ')}</strong>
+                <p>展开完整界面后选择要追加的常驻卡。</p>
+              </div>
+            ) : ranking[0] ? (
+              <div className="floating-recommendation">
+                <span>当前推荐</span>
+                <strong>{ranking[0].card.name}</strong>
+                <b>{ranking[0].scoreLabel} {ranking[0].scoreDelta >= 0 ? '+' : ''}{ranking[0].scoreDelta}</b>
+                <p>选择后总活性 {ranking[0].activityAfter} · F8 后自动刷新</p>
+              </div>
+            ) : (
+              <div className="floating-recommendation"><span>等待候选牌</span></div>
+            )}
+            <div className="floating-actions">
+              <button type="button" className="primary-button" onClick={() => void toggleFloatingMode()}>
+                展开完整界面
+              </button>
+              <button type="button" onClick={recognizeScreen}>F8 识别状态</button>
+            </div>
+            <small>{status}</small>
+          </section>
+        </main>
+      ) : (
       <main className="app-grid">
         <StatePanel
           state={state}
@@ -1061,6 +1133,7 @@ function App() {
           disabled={awaitingEndRound}
         />
       </main>
+      )}
 
       <footer className="status-bar">
         <span><i />{status}</span>
