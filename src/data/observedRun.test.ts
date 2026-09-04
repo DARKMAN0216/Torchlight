@@ -6,6 +6,7 @@ import {
   observedPersistentSelections,
   observedPotionOffers,
   observedRun,
+  observedSurgeryPlanOffers,
 } from './observedRun'
 
 describe('observed gameplay run', () => {
@@ -197,6 +198,24 @@ describe('observed gameplay run', () => {
       'confirmed',
       'partial',
       'unresolved',
+    ])
+  })
+
+  it('replays birth bone powder into the player-owned round-eleven surgery plan phase', () => {
+    const step = observedRun.at(-1)!
+    const offer = observedSurgeryPlanOffers[0]
+
+    expect(step.chosenCardId).toBe('birth-bone-powder')
+    expect(step.afterPotion?.monsters[0]).toMatchObject({ quantity: 854, unitActivity: 523 })
+    expect(step.after.monsters[0]).toMatchObject({ quantity: 854, unitActivity: 543 })
+    expect(step.afterPhase).toBe('surgeryPlanSelection')
+    expect(totalActivity(step.after)).toBe(463722)
+    expect(offer.state).toEqual(step.after)
+    expect(offer.decisionAuthority).toBe('player')
+    expect(offer.plans).toEqual([
+      { name: '颅骨钻孔术', risk: 'high' },
+      { name: '表皮移植实验', risk: 'low' },
+      { name: '全身针灸疗法', risk: 'high' },
     ])
   })
 })

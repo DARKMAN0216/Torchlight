@@ -22,6 +22,7 @@ export interface MonsterSlotRegions {
 export interface ScreenshotLayoutProfile {
   id: string
   phase: RecognitionScreenPhase
+  decisionAuthority: 'engine' | 'player'
   referenceSize: { width: number; height: number }
   stageTitle: NormalizedRegion
   roundCounter: NormalizedRegion
@@ -40,6 +41,7 @@ const region = (
 export const surgeryPreparation1920: ScreenshotLayoutProfile = {
   id: 'surgery-preparation-1920x1080-v1',
   phase: 'surgeryPreparation',
+  decisionAuthority: 'engine',
   referenceSize: { width: 1920, height: 1080 },
   stageTitle: region(0.038, 0.008, 0.09, 0.062),
   roundCounter: region(0.041, 0.348, 0.068, 0.065),
@@ -69,6 +71,13 @@ export const surgeryRewardSelection1920: ScreenshotLayoutProfile = {
   ...surgeryPreparation1920,
   id: 'surgery-reward-selection-1920x1080-v1',
   phase: 'surgeryRewardSelection',
+}
+
+export const surgeryPlanSelection1920: ScreenshotLayoutProfile = {
+  ...surgeryPreparation1920,
+  id: 'surgery-plan-selection-1920x1080-v1',
+  phase: 'surgeryPlanSelection',
+  decisionAuthority: 'player',
 }
 
 export const expandedPotionSelection1920: ScreenshotLayoutProfile = {

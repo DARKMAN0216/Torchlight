@@ -14,7 +14,7 @@ export interface ObservedDecisionStep {
   roundEndContext?: EvaluationContext
   after: GameState
   displayedFinalActivity: number
-  afterPhase: 'potionSelection' | 'surgeryRewardSelection' | 'expandedPotionSelection'
+  afterPhase: 'potionSelection' | 'surgeryRewardSelection' | 'expandedPotionSelection' | 'surgeryPlanSelection'
 }
 
 export interface ObservedPersistentSelection {
@@ -45,6 +45,20 @@ export interface ObservedPotionOffer {
   round: number
   persistentCardIds: string[]
   offeredCardNames: string[]
+  state: GameState
+  displayedFinalActivity: number
+}
+
+export interface ObservedSurgeryPlanOffer {
+  id: string
+  source: string
+  round: number
+  persistentCardIds: string[]
+  plans: Array<{
+    name: string
+    risk: 'low' | 'high'
+  }>
+  decisionAuthority: 'player'
   state: GameState
   displayedFinalActivity: number
 }
@@ -192,6 +206,21 @@ const roundTen: GameState = {
   ),
 }
 
+const roundTenAfterBirthBonePowder: GameState = {
+  ...roundTen,
+  monsters: roundTen.monsters.map((monster, index) =>
+    index === 0 ? { ...monster, quantity: 854 } : { ...monster },
+  ),
+}
+
+const roundEleven: GameState = {
+  ...roundTenAfterBirthBonePowder,
+  round: 11,
+  monsters: roundTenAfterBirthBonePowder.monsters.map((monster, index) =>
+    index === 0 ? { ...monster, unitActivity: 543 } : { ...monster },
+  ),
+}
+
 export const observedPersistentOffers: ObservedPersistentOffer[] = [{
   id: 'round-4-second-surgery-reward',
   source: 'design/references/round-4-after-brain-fog-second-surgery-reward-1920x1080.png',
@@ -262,6 +291,21 @@ export const observedPotionOffers: ObservedPotionOffer[] = [
     displayedFinalActivity: 425722,
   },
 ]
+
+export const observedSurgeryPlanOffers: ObservedSurgeryPlanOffer[] = [{
+  id: 'round-11-surgery-plan-selection',
+  source: 'design/references/round-11-surgery-plan-selection-1920x1080.png',
+  round: 11,
+  persistentCardIds: ['contracted-claw', 'writhing-spinal', 'dirty-bone-scraper'],
+  plans: [
+    { name: '颅骨钻孔术', risk: 'high' },
+    { name: '表皮移植实验', risk: 'low' },
+    { name: '全身针灸疗法', risk: 'high' },
+  ],
+  decisionAuthority: 'player',
+  state: roundEleven,
+  displayedFinalActivity: 463722,
+}]
 
 export const observedPersistentSelections: ObservedPersistentSelection[] = [
   {
@@ -440,5 +484,21 @@ export const observedRun: ObservedDecisionStep[] = [
     after: roundTen,
     displayedFinalActivity: 425722,
     afterPhase: 'potionSelection',
+  },
+  {
+    id: 'round-10-birth-bone-powder-and-dirty-bone-scraper',
+    sourceBefore: 'design/references/round-10-current-checkpoint-1920x1080.png',
+    sourceAfter: 'design/references/round-11-surgery-plan-selection-1920x1080.png',
+    persistentCardIds: ['contracted-claw', 'writhing-spinal', 'dirty-bone-scraper'],
+    offeredCardNames: ['生骨药粉', '孪生激素-蛊虫', '混合活蛭溶液'],
+    chosenCardId: 'birth-bone-powder',
+    context: { selectedMonsterIds: ['slot-1'] },
+    before: roundTen,
+    afterPotion: roundTenAfterBirthBonePowder,
+    roundEndPersistentCardId: 'dirty-bone-scraper',
+    roundEndContext: {},
+    after: roundEleven,
+    displayedFinalActivity: 463722,
+    afterPhase: 'surgeryPlanSelection',
   },
 ]

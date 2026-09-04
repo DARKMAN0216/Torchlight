@@ -3,6 +3,7 @@ import type { GameState, RaceId, RarityId } from '../types/game'
 export type RecognitionScreenPhase =
   | 'surgeryPreparation'
   | 'surgeryRewardSelection'
+  | 'surgeryPlanSelection'
   | 'potionSelection'
   | 'expandedPotionSelection'
   | 'candidateSelection'

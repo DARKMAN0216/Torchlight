@@ -4,6 +4,7 @@ import {
   expandedPotionSelection1920,
   potionSelection1920,
   surgeryPreparation1920,
+  surgeryPlanSelection1920,
   surgeryRewardSelection1920,
   toPixelRegion,
 } from './layout'
@@ -31,6 +32,13 @@ describe('screenshot recognition calibration', () => {
     expect(surgeryRewardSelection1920.phase).toBe('surgeryRewardSelection')
     expect(surgeryRewardSelection1920.monsterSlots).toEqual(surgeryPreparation1920.monsterSlots)
     expect(surgeryRewardSelection1920.candidateCards).toEqual(surgeryPreparation1920.candidateCards)
+  })
+
+  it('marks late surgery plans as a player decision instead of a card recommendation', () => {
+    expect(surgeryPlanSelection1920.phase).toBe('surgeryPlanSelection')
+    expect(surgeryPlanSelection1920.decisionAuthority).toBe('player')
+    expect(surgeryPlanSelection1920.monsterSlots).toEqual(surgeryPreparation1920.monsterSlots)
+    expect(surgeryPlanSelection1920.candidateCards).toEqual(surgeryPreparation1920.candidateCards)
   })
 
   it('defines five ordered card regions for a large potion box expansion', () => {
