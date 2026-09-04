@@ -67,6 +67,7 @@ export type Condition =
   | { type: 'minActivity'; target: RaceId; value: number }
   | { type: 'minRaceGroups'; target: RaceId; value: number }
   | { type: 'minRarityGroups'; rarity: RarityId; value: number }
+  | { type: 'minRaceRarityGroups'; target: RaceId; rarities: RarityId[]; value: number }
   | { type: 'singleRace' }
 
 export type CardEffect =
@@ -232,6 +233,8 @@ export interface CandidateCard {
 export interface PersistentCard {
   id: string
   name: string
+  /** OCR 常见误读或旧译名；用于识别层回填，不影响界面显示名。 */
+  aliases?: string[]
   description: string
   globalGainMultiplier?: number
   targetGainMultiplier?: Partial<Record<RaceId, number>>
@@ -243,11 +246,16 @@ export interface PersistentCard {
     excludedRace?: RaceId
     amount: number
     target: 'observedRandom'
+    condition?: Condition
   }
   onAddGroupExpectedMutation?: {
     probability: number
     toRace: RaceId
     unitActivityBonus: number
+  }
+  onMutationActivityBonus?: {
+    toRace: RaceId
+    amount: number
   }
 }
 

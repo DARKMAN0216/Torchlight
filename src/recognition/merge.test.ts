@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import { candidateCards, initialCandidateIds, initialState, persistentCards } from '../data/sampleLibrary'
 import type { RecognitionSnapshot } from './contracts'
-import { candidateNameSimilarity, mergeRecognitionSnapshot } from './merge'
+import { candidateNameSimilarity, matchPersistentName, mergeRecognitionSnapshot } from './merge'
 
 const recognized = <T>(value: T, confidence = 1) => ({ value, confidence })
 
 describe('recognition merge', () => {
   it('tolerates one OCR character error when matching a card name', () => {
     expect(candidateNameSimilarity('生骨药份', '生骨药粉')).toBe(0.75)
+  })
+
+  it('maps observed OCR aliases for newly catalogued persistent tools', () => {
+    expect(matchPersistentName(recognized('梳造骸骨'), persistentCards).card?.id)
+      .toBe('adhesive-metatarsal')
+    expect(matchPersistentName(recognized('蔓生肉芽'), persistentCards).card?.id)
+      .toBe('aberrant-bud')
   })
 
   it('updates high-confidence state and potion candidates while preserving rarity', () => {

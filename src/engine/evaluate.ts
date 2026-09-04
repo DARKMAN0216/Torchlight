@@ -107,6 +107,11 @@ function conditionMatches(state: GameState, condition?: Condition): boolean {
   if (condition.type === 'minRarityGroups') {
     return activeGroups(state).filter((monster) => monster.rarity === condition.rarity).length >= condition.value
   }
+  if (condition.type === 'minRaceRarityGroups') {
+    return activeGroups(state).filter((monster) =>
+      monster.race === condition.target && condition.rarities.includes(monster.rarity),
+    ).length >= condition.value
+  }
   const matching = activeGroups(state).filter((monster) => monster.race === condition.target)
   if (condition.type === 'minRaceGroups') return matching.length >= condition.value
   if (condition.type === 'minQuantity') {
@@ -505,6 +510,7 @@ function applyEffect(
 
 function applyPersistentRemovalTrigger(
   state: GameState,
+  source: GameState,
   card: CandidateCard,
   persistent: PersistentLoadout,
   runtime: ResolutionRuntime,
@@ -517,6 +523,7 @@ function applyPersistentRemovalTrigger(
   )
   for (const persistentCard of triggerCards) {
     const trigger = persistentCard.onRemovalQuantityBonus!
+    if (!conditionMatches(source, trigger.condition)) continue
     const triggerCount = runtime.removedGroups.filter(
       (removed) => !trigger.excludedRace || removed.race !== trigger.excludedRace,
     ).length
@@ -566,6 +573,7 @@ function applyPersistentRemovalTrigger(
 }
 
 function expectedOnAddAdjustment(
+  state: GameState,
   runtime: ResolutionRuntime,
   persistent: PersistentLoadout,
   context: EvaluationContext,
@@ -578,6 +586,8 @@ function expectedOnAddAdjustment(
 
   let bonus = 0
   const analysis: string[] = []
+  let expectedMutationEvents = 0
+  let observedMutationEvents = 0
   for (const card of mutationCards) {
     const mutation = card.onAddGroupExpectedMutation!
     const observations = context.observedAddedGroupMutationIdsByCardId
@@ -590,6 +600,7 @@ function expectedOnAddAdjustment(
         if (successfulIds.has(group.id)) {
           group.race = mutation.toRace
           group.unitActivity += mutation.unitActivityBonus
+          observedMutationEvents += 1
           analysis.push(
             `${card.name}实际触发：${group.id.replace('slot-', '槽位 ')}变异为` +
               `${raceLabels[mutation.toRace]}并 +${mutation.unitActivityBonus} 单体活性`,
@@ -600,6 +611,7 @@ function expectedOnAddAdjustment(
       }
       continue
     }
+    expectedMutationEvents += runtime.addedGroups.length * mutation.probability
     const cardBonus = runtime.addedGroups.reduce(
       (sum, group) => sum + group.quantity * mutation.unitActivityBonus * mutation.probability,
       0,
@@ -609,6 +621,34 @@ function expectedOnAddAdjustment(
       `${card.name}：${runtime.addedGroups.length} 组新增怪物按 ` +
         `${Math.round(mutation.probability * 100)}% 触发率估算，期望活性 +${Math.round(cardBonus)}`,
     )
+  }
+  const mutationBonusCards = persistentCardsIn(persistent).filter(
+    (card) => card.onMutationActivityBonus,
+  )
+  for (const card of mutationBonusCards) {
+    const mutationBonus = card.onMutationActivityBonus!
+    const matchingObservedEvents = runtime.addedGroups.filter(
+      (group) => group.race === mutationBonus.toRace,
+    ).length
+    const observedEvents = observedMutationEvents > 0 ? matchingObservedEvents : 0
+    if (observedEvents > 0) {
+      for (const group of activeGroups(state)) {
+        group.unitActivity += mutationBonus.amount * observedEvents
+      }
+      analysis.push(
+        `${card.name}实际触发 ${observedEvents} 次：所有怪物各 +` +
+          `${mutationBonus.amount * observedEvents} 单体活性`,
+      )
+    } else if (expectedMutationEvents > 0) {
+      const expectedBonus = activeGroups(state).reduce(
+        (sum, group) => sum + group.quantity * mutationBonus.amount * expectedMutationEvents,
+      0)
+      bonus += expectedBonus
+      analysis.push(
+        `${card.name}：按 ${Math.round(expectedMutationEvents * 100) / 100} 次预期异魔变异，` +
+          `估算全体活性 +${Math.round(expectedBonus)}`,
+      )
+    }
   }
   return {
     bonus: Math.round(bonus),
@@ -634,7 +674,7 @@ function evaluateCardInternal(
   for (const effect of card.effects) {
     applyEffect(state, effect, persistent, trace, warnings, context, runtime)
   }
-  applyPersistentRemovalTrigger(state, card, persistent, runtime, context, trace, warnings)
+  applyPersistentRemovalTrigger(state, source, card, persistent, runtime, context, trace, warnings)
 
   for (const persistentCard of persistentCardsIn(persistent)) {
     if (persistentCard.singleRaceFinalMultiplier && activeRaceIds(state).length === 1) {
@@ -647,7 +687,7 @@ function evaluateCardInternal(
     }
   }
 
-  const expectedOnAdd = expectedOnAddAdjustment(runtime, persistent, context)
+  const expectedOnAdd = expectedOnAddAdjustment(state, runtime, persistent, context)
   trace.push(...expectedOnAdd.analysis)
   if (expectedOnAdd.warning) warnings.push(expectedOnAdd.warning)
 
@@ -925,7 +965,10 @@ function evaluateObservedResolution(
       .filter((monster) => monster.race && !removedIds.includes(monster.id))
       .map((monster) => monster.id)
     const triggerCard = persistentCardsIn(persistent).find(
-      (item) => item.onRemovalQuantityBonus,
+      (item) => item.onRemovalQuantityBonus && conditionMatches(
+        state,
+        item.onRemovalQuantityBonus.condition,
+      ),
     )
     const trigger = triggerCard?.onRemovalQuantityBonus
     const triggerCount = trigger

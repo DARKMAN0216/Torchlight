@@ -161,6 +161,82 @@ export const persistentCards: PersistentCard[] = [
     },
   },
   {
+    id: 'adhesive-metatarsal',
+    name: '粘连跖骨',
+    aliases: ['梳造骸骨', '粘造骸骨'],
+    description: '至少有 2 组骨卫兵时，每次移除怪物，使随机 1 组怪物 +180 数量。',
+    onRemovalQuantityBonus: {
+      amount: 180,
+      target: 'observedRandom',
+      condition: { type: 'minRaceGroups', target: 'construct', value: 2 },
+    },
+    strategicProfile: {
+      summary: '凑齐两组骨卫兵后，把移除事件转化为随机 +180 数量。',
+      rules: [{
+        type: 'groupThreshold',
+        race: 'construct',
+        targetCount: 2,
+        progressValue: 55,
+        completionBonus: 90,
+        label: '双骨卫移除增殖',
+      }],
+    },
+  },
+  {
+    id: 'aberrant-bud',
+    name: '孽生肉芽',
+    aliases: ['蔓生肉芽'],
+    description: '怪物变异为异魔时，使所有怪物 +35 活性。',
+    onMutationActivityBonus: { toRace: 'aberrant', amount: 35 },
+    strategicProfile: {
+      summary: '与会使怪物变异为异魔的效果协同；每次实际变异都会抬升全体活性。',
+      rules: [{
+        type: 'groupThreshold',
+        race: 'aberrant',
+        targetCount: 1,
+        progressValue: 24,
+        completionBonus: 18,
+        label: '异魔变异协同',
+      }],
+    },
+  },
+  {
+    id: 'hypertrophic-pituitary',
+    name: '肿大脑垂体',
+    description: '拥有稀有或首领觉醒者时，每回合随机 1 组怪物 +80 活性。',
+    roundEndEffect: {
+      description: '拥有稀有或首领觉醒者时，勾选本回合实际随机命中的 1 组怪物。',
+      targeting: {
+        mode: 'observedRandom',
+        minTargets: 1,
+        maxTargets: 1,
+        prompt: '勾选肿大脑垂体本回合实际命中的怪物',
+      },
+      effects: [{
+        type: 'addActivity',
+        target: 'selected',
+        amount: 80,
+        condition: {
+          type: 'minRaceRarityGroups',
+          target: 'awakened',
+          rarities: ['rare', 'boss'],
+          value: 1,
+        },
+      }],
+    },
+    strategicProfile: {
+      summary: '保留一组稀有或首领觉醒者，开启每回合随机 +80 活性的成长。',
+      rules: [{
+        type: 'groupThreshold',
+        race: 'awakened',
+        targetCount: 1,
+        progressValue: 24,
+        completionBonus: 60,
+        label: '稀有觉醒者启动条件',
+      }],
+    },
+  },
+  {
     id: 'contracted-claw',
     name: '挛缩指爪',
     description: '移除非骨卫兵怪物时，使随机 1 组怪物 +150 数量；每次移除分别触发，并按游戏结果记录随机目标。',

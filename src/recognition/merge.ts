@@ -90,7 +90,10 @@ export function matchPersistentName(
   let bestSimilarity = 0
   for (const card of catalog) {
     if (card.id === 'none') continue
-    const similarity = candidateNameSimilarity(recognizedName.value, card.name)
+    const similarity = Math.max(
+      candidateNameSimilarity(recognizedName.value, card.name),
+      ...(card.aliases ?? []).map((alias) => candidateNameSimilarity(recognizedName.value, alias)),
+    )
     if (similarity > bestSimilarity) {
       bestCard = card
       bestSimilarity = similarity

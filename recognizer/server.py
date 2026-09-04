@@ -34,6 +34,15 @@ MONSTER_SUMMARIES = [
     (0.847, 0.342, 0.112, 0.080),
 ]
 
+# 培养罐下方名称左侧的小图标：使用用户提供的当前游戏截图模板。
+# 图标比怪物名 OCR 稳定，尤其是名称被特效、低分辨率或字体影响时。
+MONSTER_ICON_REGIONS = [
+    (x, 0.322, width, 0.115)
+    for x, _, width, _ in MONSTER_SUMMARIES
+]
+MONSTER_ICON_TEMPLATE_REFERENCE_WIDTH = 2560
+MONSTER_ICON_CONFIDENCE = 0.80
+
 MONSTER_RACES = {
     "红斑金鱼": "swarm",
     "巡察卫兵": "construct",
@@ -206,6 +215,48 @@ def normalized_text(text: str) -> str:
 class GameRecognizer:
     def __init__(self) -> None:
         self.engine = RapidOCR()
+        template_dir = Path(__file__).resolve().parent / "templates" / "monster-races"
+        self.race_icon_templates = {
+            race: image
+            for race in ("construct", "awakened", "swarm", "aberrant")
+            if (image := cv2.imread(str(template_dir / f"{race}.png"))) is not None
+        }
+
+    def recognize_race_icon(
+        self,
+        image: np.ndarray,
+        slot_index: int,
+    ) -> tuple[str, float] | None:
+        """Classify a slot by the coloured race icon, across 16:9 scales."""
+        if not self.race_icon_templates:
+            return None
+        height, width = image.shape[:2]
+        region = MONSTER_ICON_REGIONS[slot_index]
+        icon_crop, _ = crop(image, region)
+        if icon_crop.size == 0:
+            return None
+
+        # The supplied templates came from a 2560-pixel-wide client.  Test a
+        # small scale band as window chrome and UI scaling can shift it a bit.
+        scale_base = width / MONSTER_ICON_TEMPLATE_REFERENCE_WIDTH
+        best_race = ""
+        best_score = -1.0
+        for race, template in self.race_icon_templates.items():
+            for factor in (0.94, 1.0, 1.06):
+                scale = scale_base * factor
+                interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+                resized = cv2.resize(template, None, fx=scale, fy=scale, interpolation=interpolation)
+                if resized.shape[0] > icon_crop.shape[0] or resized.shape[1] > icon_crop.shape[1]:
+                    continue
+                score = float(cv2.minMaxLoc(
+                    cv2.matchTemplate(icon_crop, resized, cv2.TM_CCOEFF_NORMED),
+                )[1])
+                if score > best_score:
+                    best_race = race
+                    best_score = score
+        if best_score < MONSTER_ICON_CONFIDENCE:
+            return None
+        return best_race, best_score
 
     @staticmethod
     def lines_in_region(
@@ -272,7 +323,8 @@ class GameRecognizer:
             )
             known_name = next((name for name in MONSTER_RACES if name in joined), None)
             confidence = max((line.confidence for line in lines), default=0.0)
-            occupied = pair_match is not None or known_name is not None
+            icon_result = self.recognize_race_icon(image, index - 1)
+            occupied = pair_match is not None or known_name is not None or icon_result is not None
             slot: dict[str, Any] = {
                 "slotId": f"slot-{index}",
                 "occupied": recognized(occupied, confidence if occupied else 0.86, region, width, height),
@@ -280,6 +332,22 @@ class GameRecognizer:
             if known_name:
                 name_confidence = max((line.confidence for line in lines if known_name in line.text), default=confidence)
                 slot["name"] = recognized(known_name, name_confidence, region, width, height)
+            if icon_result:
+                icon_race, icon_confidence = icon_result
+                slot["raceId"] = recognized(
+                    icon_race,
+                    icon_confidence,
+                    MONSTER_ICON_REGIONS[index - 1],
+                    width,
+                    height,
+                )
+                if known_name and MONSTER_RACES[known_name] != icon_race:
+                    issues.append(
+                        f"槽位 {index} 名称推断为 {MONSTER_RACES[known_name]}，"
+                        f"但图标识别为 {icon_race}；已优先采用图标"
+                    )
+            elif known_name:
+                name_confidence = max((line.confidence for line in lines if known_name in line.text), default=confidence)
                 slot["raceId"] = recognized(MONSTER_RACES[known_name], name_confidence * 0.95, region, width, height)
             if pair_match:
                 unit_activity = int(pair_match.group(1))
