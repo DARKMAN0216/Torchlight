@@ -114,7 +114,7 @@
 - 核心 `GameState` 已使用 `unitActivity` 保存单体活性，并实时派生组总活性与最终活性；旧存档会换算迁移。
 - `recognizer/server.py` 已接入 RapidOCR + ONNX Runtime；窗口捕获按 `torchlight_infinite.exe` 和 `Torchlight: Infinite` 定位客户区，且要求游戏位于前台，避免读取被网页覆盖后的桌面像素。服务仅监听本机 `127.0.0.1:28765`。
 - OCR 已改为一次整图推理后按归一化区域分流，避免逐区域重复运行检测模型；四张代表性 1920 × 1080 样本耗时约 1.5–2.4 秒。
-- `src/recognition/localBridge.ts` 已实现 `ScreenRecognitionProvider`，网页支持导入已有截图；全屏游戏场景下网页点击会遮住游戏，因此窗口直捕将由后续托盘快捷键在游戏前台触发。
+- `src/recognition/localBridge.ts` 已实现 `ScreenRecognitionProvider`，网页支持导入已有截图；本地服务已注册全局 `F8`，全屏游戏保持前台时可直接触发窗口直捕并由网页自动回填。
 - `src/recognition/merge.ts` 以 0.72 为自动回填门槛，支持中文卡名轻微 OCR 误差，并在算术不一致、未知种群或非药剂阶段保守降级。
 - `recognizer/regression.py` 固定回归第 1、4、10、11 回合，覆盖三卡、五卡、单组/多组和玩家决策阶段。
 

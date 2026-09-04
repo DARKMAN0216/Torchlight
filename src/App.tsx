@@ -247,6 +247,7 @@ function App() {
   const [status, setStatus] = useState('屏幕识别版 · 启动本地识别服务后可自动回填')
   const [recognitionBusy, setRecognitionBusy] = useState(false)
   const recognitionFileInput = useRef<HTMLInputElement>(null)
+  const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot) => void>(() => {})
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null)
@@ -751,6 +752,8 @@ function App() {
     )
   }
 
+  applyRecognitionRef.current = applyRecognition
+
   const recognizeScreen = async () => {
     if (recognitionBusy) return
     setRecognitionBusy(true)
@@ -784,6 +787,38 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    let disposed = false
+    let lastSequence = 0
+    let polling = false
+
+    const pollHotkeyRecognition = async () => {
+      if (disposed || polling) return
+      polling = true
+      try {
+        const event = await localScreenRecognitionProvider.readHotkeyRecognition(lastSequence)
+        if (event && !disposed) {
+          lastSequence = event.sequence
+          if (event.snapshot) applyRecognitionRef.current(event.snapshot)
+          else setStatus(`快捷键识别失败：${event.error ?? '未知错误'}`)
+        }
+      } catch (error) {
+        if (!disposed) {
+          setStatus(`快捷键识别失败：${error instanceof Error ? error.message : '未知错误'}`)
+        }
+      } finally {
+        polling = false
+      }
+    }
+
+    void pollHotkeyRecognition()
+    const interval = window.setInterval(() => void pollHotkeyRecognition(), 800)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+    }
+  }, [])
+
   return (
     <div className="app-shell">
       <header className="app-bar">
@@ -793,8 +828,8 @@ function App() {
           <em>本地识别版</em>
         </div>
         <nav aria-label="牌局操作">
-          <button type="button" onClick={recognizeScreen} disabled={recognitionBusy}>
-            <ScanIcon /> {recognitionBusy ? '识别中…' : '识别屏幕'}
+          <button type="button" onClick={recognizeScreen} disabled={recognitionBusy} title="游戏前台时可直接按 F8">
+            <ScanIcon /> {recognitionBusy ? '识别中…' : '识别屏幕（F8）'}
           </button>
           <button
             type="button"
@@ -834,7 +869,7 @@ function App() {
       {settingsOpen && (
         <div className="settings-banner">
           <strong>当前估算假设</strong>
-          <span>屏幕识别：先运行 .\scripts\start-recognition.ps1；“识别屏幕”读取主显示器，“导入截图”可识别已保存图片。</span>
+          <span>屏幕识别：先运行 .\scripts\start-recognition.ps1；游戏前台按 F8 可后台识别并自动回填。网页按钮仅适用于游戏未被遮挡时；导入截图可识别已保存图片。</span>
           <span>当前常驻组合：{persistentLoadoutName(persistentLoadout)}。手术用具按追加关系共同参与评分。</span>
           <span>重抽来自完整示例牌库、等概率、同一批不重复。真实规则录入后可替换。</span>
           <span>战略基础权重：每个有效怪物组 +6；魔法/稀有/首领分别 +8/+20/+36；常驻卡成型条件使用独立协同权重。</span>

@@ -5,6 +5,7 @@ import ctypes
 import json
 import re
 import sys
+import threading
 import time
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -50,6 +51,10 @@ PHASE_WORDS = (
 
 TORCHLIGHT_WINDOW_TITLE = "Torchlight: Infinite"
 TORCHLIGHT_PROCESS_NAME = "torchlight_infinite.exe"
+HOTKEY_ID = 0x564F
+HOTKEY_MOD_NOREPEAT = 0x4000
+HOTKEY_VK_F8 = 0x77
+WM_HOTKEY = 0x0312
 
 
 @dataclass(frozen=True)
@@ -58,6 +63,49 @@ class ClientRegion:
     top: int
     width: int
     height: int
+
+
+class HotkeyRecognitionStore:
+    """Stores exactly one newest global-hotkey recognition result for the web UI."""
+
+    def __init__(self, recognizer: "GameRecognizer") -> None:
+        self._recognizer = recognizer
+        self._lock = threading.Lock()
+        self._sequence = 0
+        self._status = "idle"
+        self._result: dict[str, Any] | None = None
+        self._error: str | None = None
+
+    def trigger(self) -> None:
+        with self._lock:
+            if self._status == "recognizing":
+                return
+            self._status = "recognizing"
+            self._result = None
+            self._error = None
+        threading.Thread(target=self._recognize, name="vorax-hotkey-recognition", daemon=True).start()
+
+    def _recognize(self) -> None:
+        try:
+            result = self._recognizer.recognize(capture_torchlight_window(), "torchlight-hotkey-f8")
+            with self._lock:
+                self._sequence += 1
+                self._status = "completed"
+                self._result = result
+        except Exception as error:  # noqa: BLE001
+            with self._lock:
+                self._sequence += 1
+                self._status = "failed"
+                self._error = str(error)
+
+    def payload(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "sequence": self._sequence,
+                "status": self._status,
+                "result": self._result,
+                "error": self._error,
+            }
 
 
 class WinRect(ctypes.Structure):
@@ -398,7 +446,7 @@ def require_torchlight_window_foreground(hwnd: int) -> None:
     if user32.GetForegroundWindow() != hwnd:
         raise RuntimeError(
             "Torchlight: Infinite 当前不在前台；网页会遮住游戏，请改用“导入截图”。"
-            "后续托盘快捷键可在游戏前台时直接捕获",
+            "或切回游戏后按 F8 直接捕获",
         )
 
 
@@ -417,8 +465,31 @@ def capture_torchlight_window() -> np.ndarray:
     return cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
 
 
+def run_global_hotkey(store: HotkeyRecognitionStore) -> None:
+    """Listen for F8 without taking foreground focus away from the game."""
+    if sys.platform != "win32":
+        print("全局快捷键仅支持 Windows，已跳过注册")
+        return
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    if not user32.RegisterHotKey(None, HOTKEY_ID, HOTKEY_MOD_NOREPEAT, HOTKEY_VK_F8):
+        error_code = ctypes.get_last_error()
+        print(f"无法注册全局快捷键 F8（Win32 错误 {error_code}）；可能已被其他程序占用")
+        return
+
+    print("全局快捷键已注册：F8（游戏保持前台时按下即可识别）")
+    message = wintypes.MSG()
+    try:
+        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
+            if message.message == WM_HOTKEY and message.wParam == HOTKEY_ID:
+                store.trigger()
+    finally:
+        user32.UnregisterHotKey(None, HOTKEY_ID)
+
+
 class RecognitionHandler(BaseHTTPRequestHandler):
     recognizer: GameRecognizer
+    hotkey_store: HotkeyRecognitionStore
 
     def _allowed_origin(self) -> str | None:
         origin = self.headers.get("Origin")
@@ -451,7 +522,14 @@ class RecognitionHandler(BaseHTTPRequestHandler):
             self._send(403, {"error": "origin not allowed"})
             return
         if self.path == "/health":
-            self._send(200, {"ok": True, "service": "vorax-local-recognizer"})
+            self._send(200, {
+                "ok": True,
+                "service": "vorax-local-recognizer",
+                "hotkey": "F8",
+            })
+            return
+        if self.path == "/hotkey-recognition":
+            self._send(200, self.hotkey_store.payload())
             return
         self._send(404, {"error": "not found"})
 
@@ -478,6 +556,8 @@ class RecognitionHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(error)})
 
     def log_message(self, format: str, *args: Any) -> None:
+        if self.path == "/hotkey-recognition":
+            return
         sys.stdout.write(f"[recognizer] {self.address_string()} {format % args}\n")
 
 
@@ -497,9 +577,16 @@ def main() -> None:
         return
 
     RecognitionHandler.recognizer = recognizer
+    RecognitionHandler.hotkey_store = HotkeyRecognitionStore(recognizer)
     server = ThreadingHTTPServer((args.host, args.port), RecognitionHandler)
     print(f"渴瘾屏幕识别服务：http://{args.host}:{args.port}")
-    print("保持本窗口运行，然后在网页中点击“识别屏幕”。")
+    print("保持本窗口运行；游戏前台按 F8 可截图识别，网页会自动读取结果。")
+    threading.Thread(
+        target=run_global_hotkey,
+        args=(RecognitionHandler.hotkey_store,),
+        name="vorax-global-hotkey",
+        daemon=True,
+    ).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
