@@ -1,13 +1,13 @@
 # 工作环境迁移说明
 
-更新时间：2026-09-03（Asia/Shanghai）
+更新时间：2026-09-04（Asia/Shanghai）
 
 ## 当前状态
 
 - 项目：React + TypeScript + Vite 的《火炬之光：无限》渴瘾决策器。
 - 已解析 84 张真实卡牌目录，其中 23 张候选药剂已结构化。
 - 支持六个独立怪物槽、3/5 张候选、目标选择、随机结果记录、多常驻组合、战略评分、应用、撤销和本地保存。
-- 十二张完整实战截图保存在 `design/references/`：九张 1920 × 1080、两张 2560 × 1440、一张 2560 × 1392 窗口图；另有融合机制说明裁图。
+- 十五张完整实战截图保存在 `design/references/`，其中新增 `round-10-current-checkpoint-1920x1080.png` 作为跨环境续接点；另有融合机制说明裁图。
 - 可重放实战轨迹保存在 `src/data/observedRun.ts`。
 - 详细历史、规则边界和后续事项见 `CODEX_HANDOFF.md`、`README.md`、`QA.md`、`SCREEN_RECOGNITION_PLAN.md`。
 
@@ -49,4 +49,4 @@ npm run build
 npm run dev
 ```
 
-当前验证基线：9 个测试文件、75 项测试全部通过，TypeScript 与 Vite 生产构建成功；洗牌扣减/禁用/撤销及药剂箱优先均已通过页面交互验证，控制台无 error/warn。
+当前验证基线：9 个测试文件、77 项测试全部通过，TypeScript 与 Vite 生产构建成功；洗牌扣减/禁用/撤销及药剂箱优先均已通过页面交互验证，控制台无 error/warn。统一接手流程见 `WORKFLOW.md`。
