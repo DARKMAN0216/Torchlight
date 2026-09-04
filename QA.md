@@ -302,3 +302,9 @@
 - 服务在 `GET /hotkey-recognition` 暴露最新一次热键结果，网页每 800ms 读取一次并只消费新的序号；成功结果自动回填，失败结果只显示原因且不修改局面。
 - 实机验证 `/health` 返回 `hotkey: F8`；重复注册同一热键返回 Win32 错误 `1409`，确认该服务已持有快捷键。模拟热键已触发后台识别，并经网页轮询显示结果。
 - 本轮仍执行 Python 编译检查、四张固定 OCR 样本回归、11 个测试文件共 87 项测试，以及 TypeScript/Vite 生产构建，全部通过。
+
+## Windows 桌面客户端
+
+- 已安装 Rust stable MSVC 工具链，并使用 Tauri 2 将现有 React 界面封装为原生窗口；默认 `pnpm dev` 会启动客户端，`pnpm web:dev` 仅用于网页调试。
+- 实机启动的 release 进程为 `vorax-decision-assistant.exe`，窗口标题为“渴瘾决策器”；默认窗口 1440 × 920，最小尺寸 1080 × 680。
+- `pnpm desktop:build` 已成功生成 NSIS 安装包：`src-tauri/target/release/bundle/nsis/渴瘾决策器_0.1.0_x64-setup.exe`。MSI 需要的 WiX/VBSCRIPT 组件在本机受限，因此发行配置明确采用 NSIS，避免依赖该系统可选组件。

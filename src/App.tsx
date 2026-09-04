@@ -244,7 +244,7 @@ function App() {
     () => saved?.rerollsRemaining ?? 3,
   )
   const [history, setHistory] = useState<HistoryEntry[]>([])
-  const [status, setStatus] = useState('屏幕识别版 · 启动本地识别服务后可自动回填')
+  const [status, setStatus] = useState('桌面客户端 · 启动本地识别服务后可自动回填')
   const [recognitionBusy, setRecognitionBusy] = useState(false)
   const recognitionFileInput = useRef<HTMLInputElement>(null)
   const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot) => void>(() => {})
@@ -346,7 +346,7 @@ function App() {
     try {
       localStorage.setItem(storageKey, JSON.stringify(workspace))
     } catch {
-      setStatus('浏览器未允许自动保存，当前局面仅保留在本次会话')
+      setStatus('客户端本地存储不可用，当前局面仅保留在本次会话')
     }
   }, [state, persistentIds, candidateIds, offerCount, rerollsRemaining, awaitingEndRound])
 
@@ -679,7 +679,7 @@ function App() {
       localStorage.setItem(storageKey, JSON.stringify(workspace))
       setStatus(`局面已保存 · ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`)
     } catch {
-      setStatus('保存失败：浏览器未提供本地存储权限')
+      setStatus('保存失败：客户端本地存储不可用')
     }
   }
 
@@ -754,20 +754,8 @@ function App() {
 
   applyRecognitionRef.current = applyRecognition
 
-  const recognizeScreen = async () => {
-    if (recognitionBusy) return
-    setRecognitionBusy(true)
-    setStatus('正在截取主屏幕并进行本地识别…')
-    try {
-      if (!await localScreenRecognitionProvider.isAvailable()) {
-        throw new Error('本地识别服务未启动，请先运行 .\\scripts\\start-recognition.ps1')
-      }
-      applyRecognition(await localScreenRecognitionProvider.captureAndRecognize())
-    } catch (error) {
-      setStatus(`识别失败：${error instanceof Error ? error.message : '未知错误'}`)
-    } finally {
-      setRecognitionBusy(false)
-    }
+  const recognizeScreen = () => {
+    setStatus('请保持游戏在前台后按 F8；桌面客户端会自动读取并回填识别结果')
   }
 
   const recognizeImage = async (file: File) => {
@@ -825,11 +813,11 @@ function App() {
         <div className="brand">
           <FlaskIcon />
           <span>渴瘾决策器</span>
-          <em>本地识别版</em>
+          <em>桌面客户端</em>
         </div>
         <nav aria-label="牌局操作">
-          <button type="button" onClick={recognizeScreen} disabled={recognitionBusy} title="游戏前台时可直接按 F8">
-            <ScanIcon /> {recognitionBusy ? '识别中…' : '识别屏幕（F8）'}
+          <button type="button" onClick={recognizeScreen} title="游戏前台时按 F8，客户端自动回填结果">
+            <ScanIcon /> 识别屏幕（F8）
           </button>
           <button
             type="button"
@@ -869,7 +857,7 @@ function App() {
       {settingsOpen && (
         <div className="settings-banner">
           <strong>当前估算假设</strong>
-          <span>屏幕识别：先运行 .\scripts\start-recognition.ps1；游戏前台按 F8 可后台识别并自动回填。网页按钮仅适用于游戏未被遮挡时；导入截图可识别已保存图片。</span>
+          <span>屏幕识别：先运行 .\scripts\start-recognition.ps1；保持游戏前台并按 F8，桌面客户端会自动回填。导入截图可识别已保存图片。</span>
           <span>当前常驻组合：{persistentLoadoutName(persistentLoadout)}。手术用具按追加关系共同参与评分。</span>
           <span>重抽来自完整示例牌库、等概率、同一批不重复。真实规则录入后可替换。</span>
           <span>战略基础权重：每个有效怪物组 +6；魔法/稀有/首领分别 +8/+20/+36；常驻卡成型条件使用独立协同权重。</span>
