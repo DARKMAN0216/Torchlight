@@ -96,6 +96,17 @@ select:focus-visible {
 .app-bar nav button:last-child { border-right: 1px solid var(--border-soft); }
 .app-bar nav button:hover { background: var(--surface-2); color: #fff; }
 .app-bar nav button:disabled { opacity: .35; cursor: not-allowed; }
+.recognition-indicator {
+  align-self: center;
+  margin-left: 10px;
+  padding: 4px 8px;
+  border: 1px solid #4a3830;
+  border-radius: 999px;
+  color: #c5a18d;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.recognition-indicator.online { border-color: #326646; color: #71c990; }
 
 .visually-hidden {
   position: fixed;
@@ -279,6 +290,29 @@ select:focus-visible {
   font-size: 11px;
   line-height: 1.4;
 }
+
+.persistent-offer-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+.persistent-offer-card {
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #51442e;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(160deg, #242019, #171c1e 60%);
+}
+.persistent-offer-card > span { color: var(--accent); font-size: 10px; }
+.persistent-offer-card h2 { margin: 0; color: #f0e4c7; font-size: 15px; }
+.persistent-offer-card p { margin: 0; color: #b8bfbc; font-size: 11px; line-height: 1.6; }
+.persistent-offer-card strong { margin-top: auto; color: #90c7a0; font-size: 11px; }
+.persistent-offer-card .primary-button { margin-top: 2px; }
+.persistent-offer-unmapped { color: #c9aa84 !important; }
 
 .state-panel { padding-bottom: 14px; }
 .state-panel > .field-label,

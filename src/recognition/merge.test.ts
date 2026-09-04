@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { candidateCards, initialCandidateIds, initialState } from '../data/sampleLibrary'
+import { candidateCards, initialCandidateIds, initialState, persistentCards } from '../data/sampleLibrary'
 import type { RecognitionSnapshot } from './contracts'
 import { candidateNameSimilarity, mergeRecognitionSnapshot } from './merge'
 
@@ -59,10 +59,11 @@ describe('recognition merge', () => {
     expect(result.matchedCandidateCount).toBe(3)
   })
 
-  it('skips cards during every surgery phase while retaining the recognized board', () => {
+  it('keeps early surgery rewards as persistent-card choices and skips only post-round-ten plans', () => {
     const snapshot: RecognitionSnapshot = {
       capturedAt: '2026-09-04T00:00:00Z',
       phase: recognized('surgeryPlanSelection'),
+      round: recognized(11),
       candidateCardIds: [],
       candidateCardNames: [recognized('颅骨钻孔术')],
     }
@@ -72,20 +73,37 @@ describe('recognition merge', () => {
       5,
       snapshot,
       candidateCards,
+      persistentCards,
     )
 
     expect(result.candidateIds).toEqual(initialCandidateIds)
-    expect(result.warnings.join(' ')).toContain('已跳过手术卡')
+    expect(result.warnings.join(' ')).toContain('已跳过方案卡')
 
     const rewardResult = mergeRecognitionSnapshot(
       initialState,
       initialCandidateIds,
       5,
-      { ...snapshot, phase: recognized('surgeryRewardSelection') },
+      {
+        ...snapshot,
+        phase: recognized('surgeryRewardSelection'),
+        round: recognized(4),
+        candidateCardNames: [
+          recognized('生皮革拘束带'),
+          recognized('脏污刮骨刀'),
+          recognized('簇生虫卵'),
+        ],
+      },
       candidateCards,
+      persistentCards,
     )
     expect(rewardResult.candidateIds).toEqual(initialCandidateIds)
-    expect(rewardResult.warnings.join(' ')).toContain('已跳过手术卡')
+    expect(rewardResult.matchedPersistentCount).toBe(3)
+    expect(rewardResult.persistentOffers.map((offer) => offer.cardId)).toEqual([
+      'leather-restraint',
+      'dirty-bone-scraper',
+      'clustered-insect-eggs',
+    ])
+    expect(rewardResult.warnings).toEqual([])
   })
 
   it('rejects monster changes when OCR arithmetic contradicts the displayed final', () => {

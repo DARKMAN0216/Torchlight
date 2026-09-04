@@ -9,6 +9,7 @@ import { estimateRedraw } from './engine/redraw'
 import { evaluateCard, rankCards, totalActivity } from './engine/evaluate'
 import { applyOpportunityPolicy } from './engine/opportunity'
 import { persistentCardsIn, persistentLoadoutName } from './engine/persistent'
+import { rankPersistentChoices } from './engine/persistentChoice'
 import { hasEligibleTargetSet, targetIsDisabled, targetSetIsValid } from './engine/targeting'
 import { CandidateCardView } from './components/CandidateCardView'
 import { FlaskIcon, AddIcon, BookIcon, SaveIcon, ScanIcon, SettingsIcon, UndoIcon } from './components/Icons'
@@ -17,7 +18,7 @@ import { RecommendationPanel } from './components/RecommendationPanel'
 import { RedrawStrip } from './components/RedrawStrip'
 import { StatePanel } from './components/StatePanel'
 import { localScreenRecognitionProvider } from './recognition/localBridge'
-import { mergeRecognitionSnapshot } from './recognition/merge'
+import { mergeRecognitionSnapshot, type PersistentOffer } from './recognition/merge'
 import type { RecognitionSnapshot } from './recognition/contracts'
 import {
   raceIds,
@@ -239,13 +240,15 @@ function App() {
   const [candidateIds, setCandidateIds] = useState<string[]>(
     () => saved?.candidateIds ?? initialCandidateIds,
   )
-  const [offerCount, setOfferCount] = useState<3 | 5>(() => saved?.offerCount ?? 5)
+  const [offerCount, setOfferCount] = useState<3 | 5>(() => saved?.offerCount ?? 3)
   const [rerollsRemaining, setRerollsRemaining] = useState(
     () => saved?.rerollsRemaining ?? 3,
   )
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [status, setStatus] = useState('桌面客户端 · 启动本地识别服务后可自动回填')
   const [recognitionBusy, setRecognitionBusy] = useState(false)
+  const [recognitionServiceOnline, setRecognitionServiceOnline] = useState<boolean | null>(null)
+  const [persistentOffers, setPersistentOffers] = useState<PersistentOffer[]>([])
   const recognitionFileInput = useRef<HTMLInputElement>(null)
   const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot) => void>(() => {})
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -333,6 +336,20 @@ function App() {
     () => estimateRedraw(state, candidateCards, persistentLoadout, 3, currentBest),
     [state, persistentLoadout, currentBest],
   )
+  const offeredPersistentCards = useMemo(
+    () => persistentOffers
+      .map((offer) => offer.cardId ? persistentCardById.get(offer.cardId) : undefined)
+      .filter((card): card is NonNullable<typeof card> => Boolean(card)),
+    [persistentOffers],
+  )
+  const persistentOfferRanking = useMemo(
+    () => rankPersistentChoices(state, offeredPersistentCards, persistentLoadout),
+    [state, offeredPersistentCards, persistentLoadout],
+  )
+  const persistentOfferResultById = useMemo(
+    () => new Map(persistentOfferRanking.map((result) => [result.card.id, result])),
+    [persistentOfferRanking],
+  )
 
   useEffect(() => {
     const workspace: SavedWorkspace = {
@@ -363,7 +380,8 @@ function App() {
     setState(initialState)
     setPersistentIds(['none'])
     setCandidateIds(initialCandidateIds)
-    setOfferCount(5)
+    setOfferCount(3)
+    setPersistentOffers([])
     setRerollsRemaining(3)
     setPendingResolution(null)
     setSelectedMonsterIds([])
@@ -714,6 +732,16 @@ function App() {
     })
   }
 
+  const choosePersistentOffer = (id: string) => {
+    const card = persistentCardById.get(id)
+    if (!card || card.id === 'none') return
+    setPersistentIds((current) => current.includes(id)
+      ? current
+      : [...current.filter((item) => item !== 'none'), id])
+    setPersistentOffers([])
+    setStatus(`已选择“${card.name}”并追加为常驻手术用具；收益从后续回合开始计算`)
+  }
+
   const applyRecognition = (snapshot: RecognitionSnapshot) => {
     const result = mergeRecognitionSnapshot(
       state,
@@ -721,6 +749,7 @@ function App() {
       offerCount,
       snapshot,
       candidateCards,
+      persistentCards,
     )
     const changed = result.appliedFieldCount > 0 || result.matchedCandidateCount > 0
     if (changed) {
@@ -740,6 +769,7 @@ function App() {
       setObservedNewGroupRaces([])
       resetObservedResolution()
     }
+    setPersistentOffers(result.persistentOffers)
 
     const latency = snapshot.diagnostics?.latencyMs
       ? ` · ${Math.round(snapshot.diagnostics.latencyMs)} ms`
@@ -747,14 +777,19 @@ function App() {
     const warning = result.warnings.length > 0
       ? ` · ${result.warnings[0]}`
       : ''
-    setStatus(
-      `识别完成：回填 ${result.appliedFieldCount} 个状态字段，匹配 ${result.matchedCandidateCount} 张候选${latency}${warning}`,
-    )
+    const matchedCards = result.matchedPersistentCount > 0
+      ? `，匹配 ${result.matchedPersistentCount} 张常驻手术用具`
+      : `，匹配 ${result.matchedCandidateCount} 张候选药剂`
+    setStatus(`识别完成：回填 ${result.appliedFieldCount} 个状态字段${matchedCards}${latency}${warning}`)
   }
 
   applyRecognitionRef.current = applyRecognition
 
   const recognizeScreen = () => {
+    if (recognitionServiceOnline === false) {
+      setStatus('本地识别服务未连接。请运行 .\\scripts\\start-recognition.ps1，服务启动后 F8 会自动恢复可用')
+      return
+    }
     setStatus('请保持游戏在前台后按 F8；桌面客户端会自动读取并回填识别结果')
   }
 
@@ -779,21 +814,34 @@ function App() {
     let disposed = false
     let lastSequence = 0
     let polling = false
+    let connected = false
+    let nextHealthCheckAt = 0
 
     const pollHotkeyRecognition = async () => {
       if (disposed || polling) return
       polling = true
       try {
+        if (!connected) {
+          if (Date.now() < nextHealthCheckAt) return
+          const available = await localScreenRecognitionProvider.isAvailable()
+          nextHealthCheckAt = Date.now() + 3_000
+          if (!available) {
+            if (!disposed) setRecognitionServiceOnline(false)
+            return
+          }
+          connected = true
+          if (!disposed) setRecognitionServiceOnline(true)
+        }
         const event = await localScreenRecognitionProvider.readHotkeyRecognition(lastSequence)
         if (event && !disposed) {
           lastSequence = event.sequence
           if (event.snapshot) applyRecognitionRef.current(event.snapshot)
           else setStatus(`快捷键识别失败：${event.error ?? '未知错误'}`)
         }
-      } catch (error) {
-        if (!disposed) {
-          setStatus(`快捷键识别失败：${error instanceof Error ? error.message : '未知错误'}`)
-        }
+      } catch {
+        connected = false
+        nextHealthCheckAt = Date.now() + 3_000
+        if (!disposed) setRecognitionServiceOnline(false)
       } finally {
         polling = false
       }
@@ -851,6 +899,9 @@ function App() {
           <button type="button" onClick={() => setSettingsOpen((value) => !value)}>
             <SettingsIcon /> 设置
           </button>
+          <span className={`recognition-indicator ${recognitionServiceOnline === true ? 'online' : 'offline'}`}>
+            {recognitionServiceOnline === true ? 'F8 识别已就绪' : 'F8 识别服务未连接'}
+          </span>
         </nav>
       </header>
 
@@ -913,6 +964,46 @@ function App() {
         />
 
         <div className="center-column">
+          {persistentOffers.length > 0 ? (
+            <section className="panel persistent-offer-workspace">
+              <div className="panel-heading candidate-heading">
+                <div>
+                  <h1>常驻手术用具 <span>({persistentOffers.length}/3)</span></h1>
+                  <p>这是追加常驻的选择，不是药剂候选；选定后会进入当前常驻组合。</p>
+                </div>
+              </div>
+              <div className="persistent-offer-grid">
+                {persistentOffers.map((offer, index) => {
+                  const card = offer.cardId ? persistentCardById.get(offer.cardId) : undefined
+                  const result = card ? persistentOfferResultById.get(card.id) : undefined
+                  return (
+                    <article className="persistent-offer-card" key={`${index}-${offer.name}`}>
+                      <span>手术用具 {index + 1}</span>
+                      <h2>{card?.name ?? offer.name}</h2>
+                      {card ? (
+                        <>
+                          <p>{card.description}</p>
+                          <strong>{result?.scoreDelta && result.scoreDelta > 0
+                            ? `预计后续收益 +${Math.round(result.scoreDelta)}`
+                            : '暂无可确认的后续收益'}</strong>
+                          <button
+                            type="button"
+                            className="primary-button"
+                            disabled={awaitingEndRound || Boolean(pendingResolution)}
+                            onClick={() => choosePersistentOffer(card.id)}
+                          >
+                            选择并追加
+                          </button>
+                        </>
+                      ) : (
+                        <p className="persistent-offer-unmapped">已识别“{offer.name}”，但它尚未结构化入库；请暂时在左侧手动追加，不能将其当作药剂跳过。</p>
+                      )}
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
+          ) : (
           <section className="panel candidate-workspace">
             <div className="panel-heading candidate-heading">
               <div>
@@ -952,6 +1043,7 @@ function App() {
               })}
             </div>
           </section>
+          )}
 
           <RedrawStrip
             currentBest={currentBest}

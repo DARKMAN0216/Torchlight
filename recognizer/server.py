@@ -495,7 +495,18 @@ class RecognitionHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin is None:
             return None
-        return origin if re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):\d+", origin) else ""
+        # Vite runs on localhost during development, while the packaged Tauri
+        # client is served from its own local WebView origin.  Both still talk
+        # only to this loopback-only service.
+        tauri_origins = {
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+        }
+        return origin if (
+            origin in tauri_origins
+            or re.fullmatch(r"http://(?:127\.0\.0\.1|localhost):\d+", origin)
+        ) else ""
 
     def _send(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

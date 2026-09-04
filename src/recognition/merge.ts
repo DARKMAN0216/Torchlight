@@ -1,4 +1,5 @@
 import type { CandidateCard, GameState } from '../types/game'
+import type { PersistentCard } from '../types/game'
 import type { RecognitionScreenPhase, RecognitionSnapshot, RecognizedValue } from './contracts'
 import { validateRecognitionConsistency } from './validation'
 
@@ -8,10 +9,9 @@ const candidatePhases = new Set<RecognitionScreenPhase>([
   'expandedPotionSelection',
   'candidateSelection',
 ])
-const surgeryPhases = new Set<RecognitionScreenPhase>([
+const persistentChoicePhases = new Set<RecognitionScreenPhase>([
   'surgeryPreparation',
   'surgeryRewardSelection',
-  'surgeryPlanSelection',
 ])
 
 export interface RecognitionMergeResult {
@@ -21,7 +21,15 @@ export interface RecognitionMergeResult {
   phase: RecognitionScreenPhase
   appliedFieldCount: number
   matchedCandidateCount: number
+  persistentOffers: PersistentOffer[]
+  matchedPersistentCount: number
   warnings: string[]
+}
+
+export interface PersistentOffer {
+  name: string
+  cardId?: string
+  confidence: number
 }
 
 function normalizeName(value: string): string {
@@ -74,12 +82,33 @@ export function matchCandidateName(
     : { confidence }
 }
 
+export function matchPersistentName(
+  recognizedName: RecognizedValue<string>,
+  catalog: readonly PersistentCard[],
+): { card?: PersistentCard; confidence: number } {
+  let bestCard: PersistentCard | undefined
+  let bestSimilarity = 0
+  for (const card of catalog) {
+    if (card.id === 'none') continue
+    const similarity = candidateNameSimilarity(recognizedName.value, card.name)
+    if (similarity > bestSimilarity) {
+      bestCard = card
+      bestSimilarity = similarity
+    }
+  }
+  const confidence = bestSimilarity * recognizedName.confidence
+  return confidence >= confidenceThreshold
+    ? { card: bestCard, confidence }
+    : { confidence }
+}
+
 export function mergeRecognitionSnapshot(
   currentState: GameState,
   currentCandidateIds: string[],
   currentOfferCount: 3 | 5,
   snapshot: RecognitionSnapshot,
   catalog: readonly CandidateCard[],
+  persistentCatalog: readonly PersistentCard[] = [],
 ): RecognitionMergeResult {
   const warnings = [...(snapshot.diagnostics?.issues ?? [])]
   const consistency = validateRecognitionConsistency(
@@ -129,6 +158,8 @@ export function mergeRecognitionSnapshot(
   let offerCount = currentOfferCount
   let candidateIds = [...currentCandidateIds]
   let matchedCandidateCount = 0
+  let persistentOffers: PersistentOffer[] = []
+  let matchedPersistentCount = 0
   const names = snapshot.candidateCardNames ?? []
   if (candidatePhases.has(phase) && (names.length === 3 || names.length === 5)) {
     offerCount = names.length
@@ -142,8 +173,20 @@ export function mergeRecognitionSnapshot(
         warnings.push(`未能可靠匹配第 ${index + 1} 张候选“${names[index].value}”`)
       }
     }
-  } else if (surgeryPhases.has(phase)) {
-    warnings.push('当前为手术阶段，已跳过手术卡；仅更新场面')
+  } else if (persistentChoicePhases.has(phase) && names.length === 3) {
+    persistentOffers = names.map((name, index) => {
+      const match = matchPersistentName(name, persistentCatalog)
+      if (match.card) {
+        matchedPersistentCount += 1
+        return { name: name.value, cardId: match.card.id, confidence: match.confidence }
+      }
+      warnings.push(`未能可靠匹配第 ${index + 1} 张常驻手术用具“${name.value}”`)
+      return { name: name.value, confidence: name.confidence }
+    })
+  } else if (phase === 'surgeryPlanSelection' && round > 10) {
+    warnings.push('当前为第 10 回合后的手术方案，选择权保留给玩家；已跳过方案卡')
+  } else if (phase === 'surgeryPlanSelection') {
+    warnings.push('当前为手术方案阶段，但回合未超过 10；未自动跳过，请人工确认阶段')
   } else if (names.length > 0 && !candidatePhases.has(phase)) {
     warnings.push(`识别到 ${names.length} 张非药剂卡，未覆盖当前候选牌`)
   }
@@ -155,6 +198,8 @@ export function mergeRecognitionSnapshot(
     phase,
     appliedFieldCount,
     matchedCandidateCount,
+    persistentOffers,
+    matchedPersistentCount,
     warnings: [...new Set(warnings)],
   }
 }
