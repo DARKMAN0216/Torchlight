@@ -112,9 +112,9 @@
 - `src/recognition/contracts.ts` 可分别承载屏幕阶段、回合、总回合数、最终活性，以及每槽的名称、种群、稀有度、数量、单体活性和显示总活性。
 - `src/recognition/validation.ts` 使用界面自身的算术关系交叉校验 OCR，避免只依赖单次文字识别。
 - 核心 `GameState` 已使用 `unitActivity` 保存单体活性，并实时派生组总活性与最终活性；旧存档会换算迁移。
-- `recognizer/server.py` 已接入 RapidOCR + ONNX Runtime，并通过 `mss` 捕获主显示器；服务仅监听本机 `127.0.0.1:28765`。
+- `recognizer/server.py` 已接入 RapidOCR + ONNX Runtime；窗口捕获按 `torchlight_infinite.exe` 和 `Torchlight: Infinite` 定位客户区，且要求游戏位于前台，避免读取被网页覆盖后的桌面像素。服务仅监听本机 `127.0.0.1:28765`。
 - OCR 已改为一次整图推理后按归一化区域分流，避免逐区域重复运行检测模型；四张代表性 1920 × 1080 样本耗时约 1.5–2.4 秒。
-- `src/recognition/localBridge.ts` 已实现 `ScreenRecognitionProvider`，网页支持直接识别主屏幕和导入已有截图。
+- `src/recognition/localBridge.ts` 已实现 `ScreenRecognitionProvider`，网页支持导入已有截图；全屏游戏场景下网页点击会遮住游戏，因此窗口直捕将由后续托盘快捷键在游戏前台触发。
 - `src/recognition/merge.ts` 以 0.72 为自动回填门槛，支持中文卡名轻微 OCR 误差，并在算术不一致、未知种群或非药剂阶段保守降级。
 - `recognizer/regression.py` 固定回归第 1、4、10、11 回合，覆盖三卡、五卡、单组/多组和玩家决策阶段。
 

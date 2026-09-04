@@ -25,7 +25,7 @@
 ## 3. 每张新截图的处理顺序
 
 1. 保存原图到 `design/references/`，文件名使用 `round-<回合>-<结果>-<分辨率>.png`。
-2. 启动 `.\scripts\start-recognition.ps1`，在网页点“识别屏幕”或“导入截图”；先检查自动回填的回合、最终活性、每槽种群/单体活性/数量和候选卡。
+2. 启动 `.\scripts\start-recognition.ps1`。当前网页会遮住全屏游戏，优先导入游戏截图；窗口直捕仅在 `Torchlight: Infinite` 保持前台时可用，适合后续托盘快捷键版。先检查自动回填的回合、最终活性、每槽种群/单体活性/数量和候选卡。
 3. 使用 `数量 × 单体活性 = 组总活性` 与各组合计交叉校验截图。
 4. 将选择前后状态写入 `src/data/observedRun.ts`；若只看到候选而未选择，写入 `observedPotionOffers`。
 5. 从卡牌 Markdown 核对名称和原文，再修改 `src/types/game.ts` 与纯函数规则引擎。

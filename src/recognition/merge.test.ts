@@ -59,7 +59,7 @@ describe('recognition merge', () => {
     expect(result.matchedCandidateCount).toBe(3)
   })
 
-  it('does not replace cards during the player-owned surgery-plan phase', () => {
+  it('skips cards during every surgery phase while retaining the recognized board', () => {
     const snapshot: RecognitionSnapshot = {
       capturedAt: '2026-09-04T00:00:00Z',
       phase: recognized('surgeryPlanSelection'),
@@ -75,7 +75,17 @@ describe('recognition merge', () => {
     )
 
     expect(result.candidateIds).toEqual(initialCandidateIds)
-    expect(result.warnings.join(' ')).toContain('风险由玩家判断')
+    expect(result.warnings.join(' ')).toContain('已跳过手术卡')
+
+    const rewardResult = mergeRecognitionSnapshot(
+      initialState,
+      initialCandidateIds,
+      5,
+      { ...snapshot, phase: recognized('surgeryRewardSelection') },
+      candidateCards,
+    )
+    expect(rewardResult.candidateIds).toEqual(initialCandidateIds)
+    expect(rewardResult.warnings.join(' ')).toContain('已跳过手术卡')
   })
 
   it('rejects monster changes when OCR arithmetic contradicts the displayed final', () => {

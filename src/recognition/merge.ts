@@ -8,6 +8,11 @@ const candidatePhases = new Set<RecognitionScreenPhase>([
   'expandedPotionSelection',
   'candidateSelection',
 ])
+const surgeryPhases = new Set<RecognitionScreenPhase>([
+  'surgeryPreparation',
+  'surgeryRewardSelection',
+  'surgeryPlanSelection',
+])
 
 export interface RecognitionMergeResult {
   state: GameState
@@ -137,8 +142,8 @@ export function mergeRecognitionSnapshot(
         warnings.push(`未能可靠匹配第 ${index + 1} 张候选“${names[index].value}”`)
       }
     }
-  } else if (phase === 'surgeryPlanSelection') {
-    warnings.push('当前为手术方案阶段，仅更新场面；方案风险由玩家判断，不自动排名')
+  } else if (surgeryPhases.has(phase)) {
+    warnings.push('当前为手术阶段，已跳过手术卡；仅更新场面')
   } else if (names.length > 0 && !candidatePhases.has(phase)) {
     warnings.push(`识别到 ${names.length} 张非药剂卡，未覆盖当前候选牌`)
   }

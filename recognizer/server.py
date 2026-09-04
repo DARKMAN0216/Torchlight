@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import re
 import sys
 import time
+from ctypes import wintypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,6 +47,30 @@ PHASE_WORDS = (
     ("手术用具", "surgeryRewardSelection"),
     ("药剂", "potionSelection"),
 )
+
+TORCHLIGHT_WINDOW_TITLE = "Torchlight: Infinite"
+TORCHLIGHT_PROCESS_NAME = "torchlight_infinite.exe"
+
+
+@dataclass(frozen=True)
+class ClientRegion:
+    left: int
+    top: int
+    width: int
+    height: int
+
+
+class WinRect(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+class WinPoint(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
 
 
 @dataclass(frozen=True)
@@ -299,12 +325,95 @@ def decode_image(data: bytes) -> np.ndarray:
     return image
 
 
-def capture_primary_monitor() -> np.ndarray:
+def process_image_name(process_id: int) -> str:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    process_query_limited_information = 0x1000
+    handle = kernel32.OpenProcess(process_query_limited_information, False, process_id)
+    if not handle:
+        return ""
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        size = wintypes.DWORD(len(buffer))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            return ""
+        return Path(buffer.value).name.casefold()
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def find_torchlight_window() -> tuple[int, ClientRegion]:
+    if sys.platform != "win32":
+        raise RuntimeError("游戏窗口捕获仅支持 Windows")
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    matches: list[tuple[int, str]] = []
+    enum_callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    @enum_callback_type
+    def collect_window(hwnd: int, _: int) -> bool:
+        if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
+            return True
+        title_length = user32.GetWindowTextLengthW(hwnd)
+        if title_length <= 0:
+            return True
+        title_buffer = ctypes.create_unicode_buffer(title_length + 1)
+        user32.GetWindowTextW(hwnd, title_buffer, len(title_buffer))
+        title = title_buffer.value.strip()
+        if title.casefold() != TORCHLIGHT_WINDOW_TITLE.casefold():
+            return True
+        process_id = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+        if process_image_name(process_id.value) == TORCHLIGHT_PROCESS_NAME:
+            matches.append((hwnd, title))
+        return True
+
+    if not user32.EnumWindows(collect_window, 0):
+        raise RuntimeError("无法枚举 Windows 窗口")
+    if not matches:
+        raise RuntimeError(
+            "未找到可见的 Torchlight: Infinite 游戏窗口；请确认游戏未最小化且已启动",
+        )
+
+    hwnd, _ = matches[0]
+    rect = WinRect()
+    if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        raise RuntimeError("无法读取游戏窗口客户区")
+    origin = WinPoint(rect.left, rect.top)
+    if not user32.ClientToScreen(hwnd, ctypes.byref(origin)):
+        raise RuntimeError("无法换算游戏窗口客户区坐标")
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    if width <= 0 or height <= 0:
+        raise RuntimeError("游戏窗口客户区尺寸无效")
+    return hwnd, ClientRegion(left=origin.x, top=origin.y, width=width, height=height)
+
+
+def find_torchlight_client_region() -> ClientRegion:
+    _, region = find_torchlight_window()
+    return region
+
+
+def require_torchlight_window_foreground(hwnd: int) -> None:
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    if user32.GetForegroundWindow() != hwnd:
+        raise RuntimeError(
+            "Torchlight: Infinite 当前不在前台；网页会遮住游戏，请改用“导入截图”。"
+            "后续托盘快捷键可在游戏前台时直接捕获",
+        )
+
+
+def capture_torchlight_window() -> np.ndarray:
     from mss import mss
 
+    hwnd, region = find_torchlight_window()
+    require_torchlight_window_foreground(hwnd)
     with mss() as capture:
-        monitor = capture.monitors[1]
-        shot = np.asarray(capture.grab(monitor))
+        shot = np.asarray(capture.grab({
+            "left": region.left,
+            "top": region.top,
+            "width": region.width,
+            "height": region.height,
+        }))
     return cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
 
 
@@ -352,7 +461,7 @@ class RecognitionHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/capture-recognize":
             try:
-                self._send(200, self.recognizer.recognize(capture_primary_monitor(), "primary-monitor"))
+                self._send(200, self.recognizer.recognize(capture_torchlight_window(), "torchlight-window"))
             except Exception as error:  # noqa: BLE001
                 self._send(500, {"error": str(error)})
             return
