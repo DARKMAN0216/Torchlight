@@ -57,6 +57,8 @@ export interface MonsterGroup {
 }
 
 export interface GameState {
+  /** User-confirmed base stats for an added swarm; never inferred from old monsters. */
+  newbornSwarm?: { quantity: number; unitActivity: number; rarity: RarityId }
   round: number
   mode: DecisionMode
   monsters: MonsterGroup[]
@@ -73,6 +75,8 @@ export type Condition =
   | { type: 'singleRace' }
 
 export type CardEffect =
+  | { type: 'withTargets'; ids: string[]; effects: CardEffect[]; condition?: Condition }
+  | { type: 'removeRightOfSelected'; condition?: Condition }
   | {
       type: 'addActivity'
       target: RaceSelector
@@ -122,6 +126,7 @@ export type CardEffect =
       target: RaceSelector
       to: RaceId | 'observed'
       bonusPerUnit?: number
+      onlyIfDifferent?: boolean
       allMatches?: boolean
       condition?: Condition
     }
@@ -160,6 +165,7 @@ export type CardEffect =
     }
   | {
       type: 'addGroup'
+      base?: GameState['newbornSwarm']
       race: RaceId
       rarity?: RarityId
       quantity?: number
@@ -219,6 +225,13 @@ export interface StrategicProfile {
 }
 
 export interface CandidateCard {
+  /** Multi-outcome preview only; actual outcomes must be imported from the game. */
+  projection?: 'cleansing' | 'leechRace' | 'leechRarity' | 'freshSpinal' | 'birthBone' | 'graySpinal' | 'aberrantAnesthetic' | 'hollowSpinal' | 'lowestBoost' | 'boneOil' | 'peat' | 'compound' | 'seriesMutation' | 'seriesRemoval' | 'egg' | 'exorcise' | 'randomRareMutation' | 'randomMagicMutation'
+  /** Card-text-only route information; does NOT supply missing new-monster stats. */
+  randomReplacementCount?: number
+  requiresNewbornSwarm?: boolean
+  excludeFromRedraw?: boolean
+  requiresScreenSync?: boolean
   id: string
   name: string
   rarity: 1 | 2 | 3
@@ -231,9 +244,14 @@ export interface CandidateCard {
   followUpOfferCount?: 3 | 5
   modelCoverage?: 'confirmed' | 'partial' | 'unresolved'
   modelWarning?: string
+  /** Known card text, but no trustworthy numeric evaluation is available yet. */
+  evaluationUnavailable?: boolean
 }
 
 export interface PersistentCard {
+  modelWarning?: string
+  /** Preview only: repetition wording has two possible interpretations. */
+  roundEndQuantityPerRaceGroup?: { race: RaceId; amount: number }
   id: string
   name: string
   /** OCR 常见误读或旧译名；用于识别层回填，不影响界面显示名。 */
@@ -257,14 +275,34 @@ export interface PersistentCard {
     unitActivityBonus: number
   }
   onMutationActivityBonus?: {
-    toRace: RaceId
+    toRace?: RaceId
     amount: number
+    condition?: Condition
   }
 }
 
 export type PersistentLoadout = PersistentCard | readonly PersistentCard[]
 
 export interface EvaluationResult {
+  /** Final race counts across branches; bounds, NOT probabilities. */
+  raceGroupRange?: Partial<Record<RaceId, { minimum: number; maximum: number }>>
+  startup?: {
+    race: RaceId
+    passiveNames: string[]
+    minimumGroups: number
+    maximumGroups: number
+    safeForPriority: boolean
+  }
+  /** Preview only. Never applied to the observed/immediate board. */
+  settlement?: {
+    uncertain: boolean
+    beforeBonus: number
+    afterBonus: number
+    change: number
+    projectedActivity: number
+    details: string[]
+  }
+  activityRange?: { minimum: number; maximum: number }
   card: CandidateCard
   state: GameState
   activityBefore: number

@@ -31,6 +31,66 @@ describe('recognition merge', () => {
     expect(ranking[0].scoreDelta).toBe(0)
   })
 
+  const removalFixture = () => {
+    const snapshot = rarityFixture()
+    snapshot.phase = recognized('potionSelection')
+    delete snapshot.displayedFinalActivity
+    snapshot.monsterSlots![0] = { slotId: 'slot-1', occupied: recognized(false, .86) }
+    const old = { ...initialState, recognitionReview: ['slot-1 空槽尚未通过总活性校验'],
+      monsters: initialState.monsters.map((m) => ({ ...m, race: 'construct' as const, rarity: 'boss' as const, quantity: 10, unitActivity: 20 })) }
+    return { snapshot, old }
+  }
+
+  it('automatically clears removed monsters without a readable HUD total and stays clear on repeat scans', () => {
+    const { snapshot, old } = removalFixture()
+    const first = mergeRecognitionSnapshot(old, initialCandidateIds, 3, snapshot, candidateCards)
+    expect(first.state.monsters[0]).toEqual({ id: 'slot-1', race: null, rarity: 'common', quantity: 0, unitActivity: 0 })
+    expect(first.appliedFieldCount).toBeGreaterThan(0)
+    expect(first.state.recognitionReview).toEqual([])
+    const second = mergeRecognitionSnapshot(first.state, initialCandidateIds, 3, snapshot, candidateCards)
+    expect(second.state.recognitionReview).toEqual([])
+    expect(second.state.monsters).toEqual(first.state.monsters)
+    expect(second.appliedFieldCount).toBe(0)
+  })
+
+  it('does not make empty slots depend on another occupied slot missing numbers', () => {
+    const { snapshot, old } = removalFixture()
+    delete snapshot.monsterSlots![1].quantity
+    const result = mergeRecognitionSnapshot(old, initialCandidateIds, 3, snapshot, candidateCards)
+    expect(result.state.monsters[0].race).toBeNull()
+    expect(result.state.recognitionReview).toEqual(['slot-2 数量未可靠识别，显示值待核对'])
+  })
+
+  it('ignores an unreliable HUD total but preserves reliable contradictions', () => {
+    const { snapshot, old } = removalFixture()
+    snapshot.displayedFinalActivity = recognized(999999, .3)
+    expect(mergeRecognitionSnapshot(old, initialCandidateIds, 3, snapshot, candidateCards).state.recognitionReview).toEqual([])
+    snapshot.displayedFinalActivity = recognized(999999)
+    expect(mergeRecognitionSnapshot(old, initialCandidateIds, 3, snapshot, candidateCards).state.monsters).toEqual(old.monsters)
+  })
+
+  it('does not silently erase monsters from missing/weak/contradictory slots or a blank screen', () => {
+    for (const variant of ['missing', 'weak', 'name', 'blank'] as const) {
+      const { snapshot, old } = removalFixture()
+      if (variant === 'missing') snapshot.monsterSlots!.shift()
+      if (variant === 'weak') snapshot.monsterSlots![0].occupied.confidence = .5
+      if (variant === 'name') snapshot.monsterSlots![0].name = recognized('未知怪物')
+      if (variant === 'blank') snapshot.monsterSlots = old.monsters.map((m) => ({ slotId: m.id, occupied: recognized(false, .86) }))
+      const result = mergeRecognitionSnapshot(old, initialCandidateIds, 3, snapshot, candidateCards)
+      expect(result.state.monsters[0]).toEqual(old.monsters[0])
+      expect(result.state.recognitionReview?.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('allows a verified all-empty board when the game total is zero', () => {
+    const { snapshot, old } = removalFixture()
+    snapshot.displayedFinalActivity = recognized(0)
+    snapshot.monsterSlots = old.monsters.map((m) => ({ slotId: m.id, occupied: recognized(false, .86) }))
+    const result = mergeRecognitionSnapshot(old, initialCandidateIds, 3, snapshot, candidateCards)
+    expect(result.state.monsters.every((m) => m.race === null && m.quantity === 0)).toBe(true)
+    expect(result.state.recognitionReview).toEqual([])
+  })
+
   it('flags missing or low-confidence rarity instead of certifying retained old values', () => {
     const snapshot = rarityFixture()
     snapshot.monsterSlots![0].rarity = undefined

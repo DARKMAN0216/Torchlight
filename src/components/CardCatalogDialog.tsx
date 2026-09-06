@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { candidateCards } from '../data/sampleLibrary'
+const modelsByName = new Map(candidateCards.map(card=>[card.name,card]))
 import {
   realCardCatalog,
   realCardCategories,
@@ -13,6 +15,7 @@ interface CardCatalogDialogProps {
 export function CardCatalogDialog({ onClose }: CardCatalogDialogProps) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<RealCardCategory | '全部'>('全部')
+  const [onlyGaps, setOnlyGaps] = useState(false)
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -25,6 +28,8 @@ export function CardCatalogDialog({ onClose }: CardCatalogDialogProps) {
   const filteredCards = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase('zh-CN')
     return realCardCatalog.filter((card) => {
+      const model = modelsByName.get(card.name)
+      if (onlyGaps && (!model || (!model.evaluationUnavailable && !model.requiresNewbornSwarm && model.modelCoverage !== 'partial'))) return false
       const inCategory = category === '全部' || card.category === category
       const haystack = [
         card.name,
@@ -35,7 +40,7 @@ export function CardCatalogDialog({ onClose }: CardCatalogDialogProps) {
       ].join(' ').toLocaleLowerCase('zh-CN')
       return inCategory && (!keyword || haystack.includes(keyword))
     })
-  }, [category, query])
+  }, [category, query, onlyGaps])
 
   return (
     <div className="catalog-backdrop" onMouseDown={(event) => {
@@ -56,11 +61,12 @@ export function CardCatalogDialog({ onClose }: CardCatalogDialogProps) {
         </header>
 
         <div className="catalog-warning">
-          <strong>当前仅作为资料目录</strong>
-          <span>正式计算仍需六个独立怪物槽、稀有度、位置、目标选择及随机分支模型。</span>
+          <strong>名称收录与计算覆盖分开显示</strong>
+          <span>范围/部分计算不等于精确期望。仍需规则或参数的卡列出原因；特殊发牌不混入普通重抽池。</span>
         </div>
 
         <div className="catalog-controls">
+          <label><input type="checkbox" checked={onlyGaps} onChange={e=>setOnlyGaps(e.target.checked)} />只看规则/参数缺口与范围模型</label>
           <label>
             <span>搜索卡名或效果</span>
             <input
@@ -94,9 +100,15 @@ export function CardCatalogDialog({ onClose }: CardCatalogDialogProps) {
               <div className="catalog-card-identity">
                 <span>{card.category}{card.subgroup ? ` · ${card.subgroup}` : ''}</span>
                 <h3>{card.name}</h3>
+                {modelsByName.get(card.name) && <small>
+                  {modelsByName.get(card.name)!.requiresNewbornSwarm ? '需确认基础参数'
+                    : modelsByName.get(card.name)!.evaluationUnavailable ? '待补规则'
+                    : modelsByName.get(card.name)!.projection ? '分支范围计算'
+                    : modelsByName.get(card.name)!.modelCoverage === 'partial' ? '部分计算' : '已接入计算'}
+                </small>}
                 {card.poolOrTarget && <small>{card.poolOrTarget}</small>}
               </div>
-              <p>{card.effectText}</p>
+              <div><p>{card.effectText}</p>{modelsByName.get(card.name)?.modelWarning && <p className="card-warning">{modelsByName.get(card.name)!.modelWarning}</p>}</div>
               <div className="mechanic-tags" aria-label="机制要求">
                 {card.mechanicTags.length > 0
                   ? card.mechanicTags.map((tag) => <span key={tag}>{tag}</span>)

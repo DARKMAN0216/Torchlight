@@ -6,9 +6,12 @@ from pathlib import Path
 import cv2
 
 from server import GameRecognizer
+from choice_tracking import ChoiceTracker
 
 
 SAMPLES = {
+    'round-1-raised-permanent-choice-2560x1440.png': (1, 408, 4, 3),
+    "round-5-short-name-retry-2560x1440.png": (5, 108688, 4, 3),
     "round-1-before-birth-bone-powder-1920x1080.png": (1, 720, 4, 3),
     "round-4-large-potion-box-expanded-1920x1080.png": (4, 16650, 2, 5),
     "round-10-current-checkpoint-1920x1080.png": (10, 425722, 1, 3),
@@ -39,6 +42,21 @@ def main() -> None:
             len(snapshot.get("candidateCardNames", [])),
         )
         ok = actual == expected and not payload["diagnostics"]["issues"]
+        if filename == 'round-1-raised-permanent-choice-2560x1440.png':
+            names = [item['value'] for item in snapshot['candidateCardNames']]
+            tracker = ChoiceTracker()
+            tracker.payload()
+            tracker.observe(snapshot, (123, 0, 0, 2560, 1440))
+            ok = ok and names == ['斑斓肝脏', '肿大脑垂体', '人蛹标本']
+            ok = ok and snapshot['phase']['value'] == 'surgeryRewardSelection' and tracker.context is not None
+            print(f"  phase={snapshot['phase']}; names={names}; choiceArmed={tracker.context is not None}")
+        if filename == 'round-5-short-name-retry-2560x1440.png':
+            third = snapshot['monsterSlots'][2]
+            ok = ok and third.get('name', {}).get('value') == '蝎兽'
+            ok = ok and third['name']['confidence'] >= .85
+            ok = ok and third.get('raceId', {}).get('value') == 'aberrant'
+            ok = ok and third.get('quantity', {}).get('value') == 78
+            ok = ok and third.get('unitActivity', {}).get('value') == 141
         if filename == "round-1-rarity-sync-2560x1440.png":
             actual_attributes = [(slot.get("raceId", {}).get("value"), slot.get("rarity", {}).get("value"))
                                  for slot in snapshot["monsterSlots"][:4]]

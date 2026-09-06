@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { isTauri } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { changeFloatingWindow, type PreviousWindowState } from './desktop/floatingWindow'
 import {
   candidateCards,
@@ -7,6 +9,9 @@ import {
   persistentCards,
 } from './data/sampleLibrary'
 import { estimateRedraw } from './engine/redraw'
+import { readUserData, saveUserData } from './storage/userData'
+import { canEvaluateCard } from './engine/cardAvailability'
+import { NewbornSwarmSettings } from './components/NewbornSwarmSettings'
 import { evaluateCard, rankCards, totalActivity } from './engine/evaluate'
 import { applyOpportunityPolicy } from './engine/opportunity'
 import { persistentCardsIn, persistentLoadoutName } from './engine/persistent'
@@ -18,8 +23,17 @@ import { CardCatalogDialog } from './components/CardCatalogDialog'
 import { RecommendationPanel } from './components/RecommendationPanel'
 import { PersistentRecommendation } from './components/PersistentRecommendation'
 import { RedrawStrip } from './components/RedrawStrip'
+import { OpeningWarning } from './components/OpeningWarning'
+import { SettlementSummary } from './components/SettlementSummary'
 import { StatePanel } from './components/StatePanel'
-import { localScreenRecognitionProvider } from './recognition/localBridge'
+import { MonsterDictionaryDialog } from './components/MonsterDictionaryDialog'
+import { StartupAdvice } from './components/StartupAdvice'
+import { FloatingMonsters } from './components/FloatingMonsters'
+import { ChoiceJournal } from './components/ChoiceJournal'
+import { choicePermanent, receiveChoices, validChoiceRecords, type ChoiceRecord, type ChoiceTrackingState } from './recognition/choiceTracking'
+import { loadMonsterDictionary, monsterDictionary, normalizeMonsterName } from './recognition/monsterDictionary'
+import { localScreenRecognitionProvider, type FollowState } from './recognition/localBridge'
+import { followNeedsSynchronization, snapshotIdentity } from './recognition/followState'
 import { mergeRecognitionSnapshot, type PersistentOffer } from './recognition/merge'
 import type { RecognitionSnapshot, RecognitionScreenPhase } from './recognition/contracts'
 import {
@@ -40,6 +54,7 @@ const persistentCardById = new Map(persistentCards.map((card) => [card.id, card]
 const mappedRealCardCount = candidateCards.filter((card) => card.tags.includes('真实卡牌')).length
 
 interface SavedWorkspace {
+  choiceLog?: ChoiceRecord[]
   state: GameState
   persistentIds: string[]
   candidateIds: string[]
@@ -147,7 +162,7 @@ function migrateLegacyWorkspace(legacy: LegacyWorkspace): SavedWorkspace {
 
 function readSavedWorkspace(): SavedWorkspace | null {
   try {
-    const raw = localStorage.getItem(storageKey)
+    const raw = readUserData(storageKey)
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
       if (isSavedWorkspace(parsed)) return parsed
@@ -235,6 +250,9 @@ function resolutionObservationIsValid(
 
 function App() {
   const [saved] = useState(() => readSavedWorkspace())
+  const [choiceLog, setChoiceLog] = useState(() => validChoiceRecords(saved?.choiceLog))
+  const [choiceTracking, setChoiceTracking] = useState<ChoiceTrackingState | null>(null)
+  const receiveChoicesRef = useRef<(tracking?: ChoiceTrackingState) => void>(() => {})
   const [state, setState] = useState<GameState>(() => saved?.state ?? initialState)
   const recognitionNeedsReview = Boolean(state.recognitionReview?.length)
   const [persistentIds, setPersistentIds] = useState<string[]>(
@@ -254,6 +272,11 @@ function App() {
   const [hotkeyReady, setHotkeyReady] = useState<boolean | null>(null)
   const [hotkeyError, setHotkeyError] = useState<string | null>(null)
   const [hotkeyBusy, setHotkeyBusy] = useState(false)
+  const [follow, setFollow] = useState<FollowState | null>(null)
+  const lastAutoSnapshot = useRef('')
+  const followControlEpoch = useRef(0)
+  const protectionQueue = useRef<Promise<void>>(Promise.resolve())
+  const followWaiting = followNeedsSynchronization(follow, recognitionServiceOnline)
   const [recognitionPhase, setRecognitionPhase] = useState<RecognitionScreenPhase | null>(null)
   const [recognizedCandidateIds, setRecognizedCandidateIds] = useState<string[] | null>(null)
   const [recognitionWarning, setRecognitionWarning] = useState('')
@@ -266,6 +289,25 @@ function App() {
   const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot) => void>(() => {})
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [catalogOpen, setCatalogOpen] = useState(false)
+  const [monsterDictionaryOpen, setMonsterDictionaryOpen] = useState(false)
+  const [monsterNames, setMonsterNames] = useState(loadMonsterDictionary)
+  const [lastMonsterSnapshot, setLastMonsterSnapshot] = useState<RecognitionSnapshot | null>(null)
+  const [recognizedMonsters, setRecognizedMonsters] = useState<GameState['monsters'] | null>(null)
+  const [captureReceipt, setCaptureReceipt] = useState('尚未收到截图请求')
+
+  useEffect(() => {
+    const enabled = Boolean(follow?.enabled)
+    // Serialize native calls so a fast start/pause cannot leave capture protection on.
+    protectionQueue.current = protectionQueue.current.catch(() => {}).then(async () => {
+      if (!isTauri()) return
+      await getCurrentWindow().setContentProtected(enabled)
+    }).catch(error => setStatus(`截图排除设置失败：${String(error)}；可暂停跟随使用单次识别`))
+  }, [follow?.enabled])
+
+  const monsterNameLookup = useMemo(() => monsterDictionary(monsterNames.entries), [monsterNames.entries])
+  const unknownMonsterNames = lastMonsterSnapshot?.monsterSlots?.filter((slot) =>
+    slot.occupied.value && (!slot.name || !monsterNameLookup.has(normalizeMonsterName(slot.name.value))),
+  ).length ?? 0
   const [pendingResolution, setPendingResolution] = useState<PendingResolution | null>(null)
   const [selectedMonsterIds, setSelectedMonsterIds] = useState<string[]>([])
   const [observedRaceByMonsterId, setObservedRaceByMonsterId] = useState<Partial<Record<string, RaceId>>>({})
@@ -336,18 +378,27 @@ function App() {
     observedPersistentTriggerTargetIds,
   ])
   const baseRanking = useMemo(
-    () => state.recognitionReview?.length ? [] : rankCards(state, offeredCards.filter((card) => recognizedCandidateIds === null || recognizedCandidateIds.includes(card.id)), persistentLoadout, evaluationContext),
-    [state, offeredCards, persistentLoadout, evaluationContext, recognizedCandidateIds],
+    () => followWaiting || state.recognitionReview?.length ? [] : rankCards(state, offeredCards.filter((card) => recognizedCandidateIds === null || recognizedCandidateIds.includes(card.id)), persistentLoadout, evaluationContext),
+    [state, offeredCards, persistentLoadout, evaluationContext, recognizedCandidateIds, followWaiting],
   )
+  const unquantifiedCards = offeredCards.filter((card) => !canEvaluateCard(state, card)
+    && (recognizedCandidateIds === null || recognizedCandidateIds.includes(card.id)))
+  const coverageWarning = unquantifiedCards.length
+    ? `已收录但缺规则/参数：${[...new Set(unquantifiedCards.map((card) => card.name))].join('、')}；不按零收益排名。活性育卵激素可在设置中填写新蛊虫基础属性后计算。`
+    : ''
+  const hasRangePreview = baseRanking.some(result => Boolean(result.activityRange) || result.settlement?.uncertain)
+  const hasStartupPriority = state.mode === 'strategic' && baseRanking.some(result => result.startup?.safeForPriority)
+  const candidateWarning = [recognitionWarning, coverageWarning].filter(Boolean).join(' ')
   const opportunityDecision = useMemo(
-    () => applyOpportunityPolicy(baseRanking, rerollsRemaining),
-    [baseRanking, rerollsRemaining],
+    () => unquantifiedCards.length || hasRangePreview || hasStartupPriority ? { ranking: baseRanking, preferPotionBox: false, preferRedraw: false }
+      : applyOpportunityPolicy(baseRanking, rerollsRemaining),
+    [baseRanking, rerollsRemaining, unquantifiedCards.length, hasRangePreview, hasStartupPriority],
   )
   const ranking = opportunityDecision.ranking
   const currentBest = ranking[0]?.score ?? totalActivity(state)
   const redraw3 = useMemo(
-    () => estimateRedraw(state, candidateCards, persistentLoadout, 3, currentBest),
-    [state, persistentLoadout, currentBest],
+    () => estimateRedraw(state, hasRangePreview || hasStartupPriority || unquantifiedCards.length ? [] : candidateCards, persistentLoadout, 3, currentBest),
+    [state, persistentLoadout, currentBest, hasRangePreview, hasStartupPriority, unquantifiedCards.length],
   )
   const offeredPersistentCards = useMemo(
     () => persistentOffers
@@ -366,6 +417,7 @@ function App() {
 
   useEffect(() => {
     const workspace: SavedWorkspace = {
+      choiceLog,
       state,
       persistentIds,
       candidateIds,
@@ -374,11 +426,12 @@ function App() {
       awaitingEndRound,
     }
     try {
-      localStorage.setItem(storageKey, JSON.stringify(workspace))
+      void saveUserData(storageKey, JSON.stringify(workspace)).catch(error =>
+        setStatus(`保存失败，磁盘旧数据未覆盖：${String(error)}。请关闭其他客户端后重新打开。`))
     } catch {
       setStatus('客户端本地存储不可用，当前局面仅保留在本次会话')
     }
-  }, [state, persistentIds, candidateIds, offerCount, rerollsRemaining, awaitingEndRound])
+  }, [state, persistentIds, candidateIds, offerCount, rerollsRemaining, awaitingEndRound, choiceLog])
 
   const setCandidateAt = (index: number, id: string) => {
     setRecognizedCandidateIds(null)
@@ -392,8 +445,10 @@ function App() {
   }
 
   const startNewGame = () => {
+    void localScreenRecognitionProvider.controlChoices('reset').catch(() => setStatus('新局已创建，但监听重置失败，请重启识别服务后 F8'))
     setHistory([])
     setState(initialState)
+    setLastMonsterSnapshot(null)
     setPersistentIds(['none'])
     setCandidateIds(initialCandidateIds)
     setOfferCount(3)
@@ -464,6 +519,18 @@ function App() {
   ) => {
     const card = candidateCardById.get(cardId)
     if (!card) return
+    if (follow?.enabled) {
+      setStatus('持续跟随中，请在游戏内选择；结算后会自动同步，不在决策器重复结算')
+      return
+    }
+    if (card.requiresScreenSync) {
+      setStatus(`${card.name}提供分支范围预览，请在游戏选择后按F8同步；未将模拟结果写回局面`)
+      return
+    }
+    if (card.evaluationUnavailable) {
+      setStatus(`${card.name}尚未量化，请在游戏使用后按 F8 读取结果；未修改当前局面`)
+      return
+    }
     if (card.followUpOfferCount) {
       const expandedIds = candidateCards
         .filter((candidate) => !candidate.followUpOfferCount)
@@ -516,6 +583,10 @@ function App() {
     }
     const card = candidateCardById.get(cardId)
     if (!card) return
+    if (card.requiresScreenSync || !canEvaluateCard(state, card)) {
+      applyCard(cardId)
+      return
+    }
     if (!card.targeting) {
       applyCard(cardId)
       return
@@ -720,8 +791,9 @@ function App() {
     setStatus('已撤销上一次应用')
   }
 
-  const saveWorkspace = () => {
+  const saveWorkspace = async () => {
     const workspace: SavedWorkspace = {
+      choiceLog,
       state,
       persistentIds,
       candidateIds,
@@ -730,14 +802,15 @@ function App() {
       awaitingEndRound,
     }
     try {
-      localStorage.setItem(storageKey, JSON.stringify(workspace))
+      await saveUserData(storageKey, JSON.stringify(workspace))
       setStatus(`局面已保存 · ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`)
-    } catch {
-      setStatus('保存失败：客户端本地存储不可用')
+    } catch (error) {
+      setStatus(`保存失败：${String(error)}；旧文件与备份保留。`)
     }
   }
 
   const useReroll = () => {
+    if (follow?.enabled) { setStatus('请在游戏内洗牌，跟随模式会读取新牌和剩余次数'); return }
     if (rerollsRemaining <= 0) {
       setStatus('本局 3 次洗牌机会已经用完')
       return
@@ -771,6 +844,7 @@ function App() {
   const choosePersistentOffer = (id: string) => {
     const card = persistentCardById.get(id)
     if (!card || card.id === 'none') return
+    void localScreenRecognitionProvider.controlChoices('reset').catch(() => {})
     setPersistentIds((current) => current.includes(id)
       ? current
       : [...current.filter((item) => item !== 'none'), id])
@@ -779,6 +853,7 @@ function App() {
   }
 
   const applyRecognition = (snapshot: RecognitionSnapshot) => {
+    setLastMonsterSnapshot(snapshot)
     const result = mergeRecognitionSnapshot(
       state,
       candidateIds,
@@ -786,9 +861,11 @@ function App() {
       snapshot,
       candidateCards,
       persistentCards,
+      monsterNames.entries,
     )
     const changed = result.appliedFieldCount > 0 || result.matchedCandidateCount > 0
       || JSON.stringify(state.recognitionReview) !== JSON.stringify(result.state.recognitionReview)
+    setRecognizedMonsters(changed ? result.state.monsters : state.monsters)
     if (changed) {
       setHistory((current) => [...current, {
         state,
@@ -806,7 +883,20 @@ function App() {
       setObservedNewGroupRaces([])
       resetObservedResolution()
     }
-    setPersistentOffers(result.persistentOffers)
+    const newGame = Boolean(follow?.enabled && snapshot.round && snapshot.round.confidence >= .85 && snapshot.round.value < state.round)
+    if (newGame) {
+      setPersistentIds(['none'])
+      setRerollsRemaining(3)
+      setHistory([])
+    }
+    // A disappearance is not evidence of which permanent was chosen. Keep the
+    // three known choices until the player records the actual one in the overlay.
+    setPersistentOffers(current => !newGame && follow?.enabled && current.length && !result.persistentOffers.length
+      && result.phase !== 'surgeryPlanSelection' ? current : result.persistentOffers)
+    const remaining = snapshot.rerollsRemaining
+    if (remaining && remaining.confidence >= .85 && Number.isInteger(remaining.value) && remaining.value >= 0 && remaining.value <= 3) {
+      setRerollsRemaining(remaining.value)
+    }
     setRecognitionPhase(result.phase)
     setRecognizedCandidateIds(result.confirmedCandidateIds)
     setRecognitionWarning(result.unmatchedCandidateNames.length
@@ -830,6 +920,23 @@ function App() {
 
   applyRecognitionRef.current = applyRecognition
 
+  receiveChoicesRef.current = (tracking) => {
+    setChoiceTracking(current => JSON.stringify(current) === JSON.stringify(tracking ?? null) ? current : tracking ?? null)
+    if (!tracking) return
+    const next = receiveChoices(choiceLog, tracking.records, persistentIds, persistentCards)
+    if (next.changed) {
+      setChoiceLog(next.log)
+      setPersistentIds(next.ids)
+    }
+  }
+
+  const confirmRecordedChoice = (record: ChoiceRecord) => {
+    const card = choicePermanent(record, persistentCards)
+    if (card) setPersistentIds(current => [...new Set([...current.filter(id => id !== 'none'), card.id])])
+    setChoiceLog(current => current.map(r => r.id === record.id ? { ...r, status: 'manual' } : r))
+    setStatus(card ? `已人工确认并追加常驻：${card.name}` : '已记录实际选择；未模拟执行药剂，怪物仍以 F8 为准')
+  }
+
   const recognizeScreen = async () => {
     if (recognitionBusy || hotkeyBusy) return
     if (recognitionServiceOnline === false) {
@@ -839,6 +946,7 @@ function App() {
     setHotkeyBusy(true)
     setStatus('截图请求已发送，正在等待本地识别…')
     try {
+      if (follow?.enabled) await localScreenRecognitionProvider.setFollow(false)
       await localScreenRecognitionProvider.triggerCapture()
     } catch (error) {
       setHotkeyBusy(false)
@@ -851,6 +959,10 @@ function App() {
     setRecognitionBusy(true)
     setStatus(`正在识别截图“${file.name}”…`)
     try {
+      if (follow?.enabled) {
+        followControlEpoch.current += 1
+        await localScreenRecognitionProvider.setFollow(false)
+      }
       if (!await localScreenRecognitionProvider.isAvailable()) {
         throw new Error('本地识别服务未启动，请先运行 .\\scripts\\start-recognition.ps1')
       }
@@ -867,6 +979,7 @@ function App() {
     let disposed = false
     let lastSequence = 0
     let lastSession: string | undefined
+    let lastFollowGeneration: number | undefined
     let polling = false
     let connected = false
     let nextHealthCheckAt = 0
@@ -886,20 +999,35 @@ function App() {
           connected = true
           if (!disposed) setRecognitionServiceOnline(true)
         }
+        const requestEpoch = followControlEpoch.current
         const event = await localScreenRecognitionProvider.readHotkeyRecognition(lastSequence, lastSession)
+        if (requestEpoch !== followControlEpoch.current) return
         if (event && !disposed) {
-          if (lastSession !== event.sessionId) lastSequence = 0
+          if (lastSession !== event.sessionId) { lastSequence = 0; lastAutoSnapshot.current = '' }
+          if (lastFollowGeneration !== event.follow?.generation) lastAutoSnapshot.current = ''
+          lastFollowGeneration = event.follow?.generation
           lastSession = event.sessionId
+          setFollow(current => JSON.stringify(current) === JSON.stringify(event.follow ?? null) ? current : event.follow ?? null)
+          receiveChoicesRef.current(event.choices)
           setHotkeyReady(event.hotkeyRegistered ?? null)
           setHotkeyError(event.hotkeyError ?? null)
           setHotkeyBusy(event.status === 'recognizing')
+          setCaptureReceipt(event.sequence > 0
+            ? `请求 #${event.sequence} · ${event.triggerSource === 'continuous-follow' ? '自动跟随' : event.triggerSource === 'f8-hook' ? '系统 F8' : event.triggerSource === 'capture-button' ? '截图按钮' : 'F8'} · ${event.status === 'recognizing' ? '处理中' : event.status === 'failed' ? '失败' : '完成'} · ${Math.round(event.elapsedMs ?? 0)} ms`
+            : '尚未收到截图请求；游戏前台按 F8')
           if (event.status === 'recognizing') {
             setStatus('F8 / 截图请求已收到，正在本机识别…')
             return
           }
           if (event.sequence <= lastSequence) return
           lastSequence = event.sequence
-          if (event.snapshot) applyRecognitionRef.current(event.snapshot)
+          if (event.snapshot) {
+            const key = snapshotIdentity(event.snapshot)
+            if (event.triggerSource !== 'continuous-follow' || key !== lastAutoSnapshot.current) {
+              if (event.triggerSource === 'continuous-follow') lastAutoSnapshot.current = key
+              applyRecognitionRef.current(event.snapshot)
+            }
+          }
           else if (event.error) setStatus(`快捷键识别失败：${event.error}`)
         }
       } catch {
@@ -917,9 +1045,14 @@ function App() {
 
     void pollHotkeyRecognition()
     const interval = window.setInterval(() => void pollHotkeyRecognition(), 350)
+    const wake = () => { nextHealthCheckAt = 0; void pollHotkeyRecognition() }
+    window.addEventListener('focus', wake)
+    document.addEventListener('visibilitychange', wake)
     return () => {
       disposed = true
       window.clearInterval(interval)
+      window.removeEventListener('focus', wake)
+      document.removeEventListener('visibilitychange', wake)
     }
   }, [])
 
@@ -932,7 +1065,7 @@ function App() {
           <em>桌面客户端</em>
         </div>
         <nav aria-label="牌局操作">
-          <button type="button" onClick={recognizeScreen} title="游戏前台时按 F8，客户端自动回填结果">
+          <button type="button" disabled={hotkeyBusy || recognitionBusy} onClick={() => void recognizeScreen()} title="按一次 F8，截图识别一次">
             <ScanIcon /> 识别屏幕（F8）
           </button>
           <button
@@ -961,6 +1094,7 @@ function App() {
           <button type="button" onClick={() => setCatalogOpen(true)}>
             <BookIcon /> 真实卡库 84
           </button>
+          <button type="button" onClick={() => setMonsterDictionaryOpen(true)}>怪物名字典{unknownMonsterNames ? ` · ${unknownMonsterNames} 槽未收录` : ''}</button>
           <button type="button" onClick={undo} disabled={history.length === 0}>
             <UndoIcon /> 撤销
           </button>
@@ -971,15 +1105,28 @@ function App() {
             {floatingMode ? '退出浮窗' : '开启浮窗'}
           </button>
           <span className={`recognition-indicator ${recognitionServiceOnline === true ? 'online' : 'offline'}`}>
-            {recognitionServiceOnline !== true ? '识别服务未连接' : hotkeyBusy ? '正在识别…' : hotkeyReady ? 'F8 识别已就绪' : hotkeyError ?? '请重启新版识别服务'}
+            {recognitionServiceOnline !== true ? '识别服务未连接' : hotkeyBusy ? '正在识别…' : hotkeyReady ? 'F8 单次识别' : hotkeyError ?? '请重启新版识别服务'}
           </span>
         </nav>
       </header>
 
+      <div className="follow-banner" role="status">
+        <strong>单次识别模式</strong>
+        <span>{recognitionServiceOnline === false ? '识别服务未连接，请启动新版服务' : '按一次 F8 截图一次；游戏选牌后，再按 F8 同步结果。'}</span>
+        <span>点牌 → 游戏确认 → 下次 F8 校验；已知常驻自动追加，药剂仅记录、不重复结算。</span>
+      </div>
+      <ChoiceJournal tracking={choiceTracking} log={choiceLog} online={recognitionServiceOnline === true}
+        onToggle={() => void localScreenRecognitionProvider.controlChoices(choiceTracking?.enabled ? 'disable' : 'enable').catch(error => setStatus(String(error)))}
+        onConfirm={confirmRecordedChoice} onIgnore={record => {
+          setChoiceLog(current => current.map(r => r.id === record.id ? { ...r, status: 'ignored' } : r))
+          setStatus('已标记误记；若该条追加了常驻，请在完整界面取消对应勾选')
+        }} />
+
       {settingsOpen && (
         <div className="settings-banner">
           <strong>当前估算假设</strong>
-          <span>屏幕识别：先运行 .\scripts\start-recognition.ps1；保持游戏前台并按 F8，桌面客户端会自动回填。导入截图可识别已保存图片。</span>
+          <NewbornSwarmSettings value={state.newbornSwarm} onChange={(newbornSwarm) => setState(current => ({ ...current, newbornSwarm }))} />
+          <span>F8 仅截图一次。选牌监听只处理当前游戏前台的左键点击，记录当前一手；刷新/药箱后重新 F8。未捕获确认（如键盘确认）时请人工核对。</span>
           <span>当前常驻组合：{persistentLoadoutName(persistentLoadout)}。手术用具按追加关系共同参与评分。</span>
           <span>重抽来自完整示例牌库、等概率、同一批不重复。真实规则录入后可替换。</span>
           <span>战略基础权重：每个有效怪物组 +6；魔法/稀有/首领分别 +8/+20/+36；常驻卡成型条件使用独立协同权重。</span>
@@ -989,6 +1136,11 @@ function App() {
       )}
 
       {catalogOpen && <CardCatalogDialog onClose={() => setCatalogOpen(false)} />}
+      {monsterDictionaryOpen && <MonsterDictionaryDialog
+        entries={monsterNames.entries} loadError={monsterNames.error} snapshot={lastMonsterSnapshot}
+        onSave={(entries) => setMonsterNames({ entries, error: '' })}
+        onClose={() => setMonsterDictionaryOpen(false)}
+      />}
 
       {floatingMode ? (
         <main className="floating-dashboard">
@@ -999,33 +1151,55 @@ function App() {
                 <strong>第 {state.round} 回合 · 当前活性 {totalActivity(state)}</strong>
               </div>
               <span className={`recognition-indicator ${recognitionServiceOnline === true ? 'online' : 'offline'}`}>
-                {recognitionServiceOnline !== true ? '服务未连接' : hotkeyBusy ? '识别中…' : hotkeyReady ? 'F8 已就绪' : hotkeyError ?? '需重启识别服务'}
+                {recognitionServiceOnline !== true ? '服务未连接' : hotkeyBusy ? '识别中…' : hotkeyReady ? 'F8 单次识别' : hotkeyError ?? '需重启识别服务'}
               </span>
             </div>
-            {recognitionNeedsReview ? (
+            {!followWaiting && <OpeningWarning state={state} offers={persistentOffers} />}
+            {!followWaiting && !recognitionNeedsReview && !pendingResolution && !awaitingEndRound && !persistentOffers.length && recognitionPhase !== 'surgeryPlanSelection' &&
+              <StartupAdvice compact state={state} loadout={persistentLoadout} ranking={ranking}
+                cards={offeredCards.filter(card => recognizedCandidateIds === null || recognizedCandidateIds.includes(card.id))} />}
+            {followWaiting ? (
+              <div className="floating-recommendation"><strong>等待实时同步，暂停旧推荐</strong><p>{follow?.message}</p></div>
+            ) : recognitionNeedsReview ? (
               <div className="floating-recommendation"><strong>怪物信息待核对，已暂停推荐</strong><p>{state.recognitionReview?.join('；')}</p><p>请重新识别，或展开完整界面修正并确认。</p></div>
+            ) : pendingResolution || awaitingEndRound ? (
+              <div className="floating-recommendation"><strong>等待结算确认</strong><p>请展开完整界面记录实际目标或结算回合；也可在游戏操作完成后按 F8 更新。</p></div>
             ) : persistentOffers.length > 0 ? (
               <PersistentRecommendation offers={persistentOffers} ranking={persistentOfferRanking} />
             ) : recognitionPhase === 'surgeryPlanSelection' ? (
               <div className="floating-recommendation"><strong>手术方案由你决定</strong><p>{state.round > 10 ? '已跳过手术方案，等待下一次药剂候选。' : '回合未超过 10，请核对阶段识别。'}</p></div>
             ) : ranking[0] ? (
               <div className="floating-recommendation">
-                <span>{recognitionWarning ? '已识别卡牌中的参考推荐' : '当前推荐'}</span>
+                <span>{candidateWarning ? '可计算卡牌中的参考推荐' : '当前推荐'}</span>
                 <strong>{ranking[0].card.name}</strong>
+                <p>{ranking[0].card.description}</p>
                 <b>{ranking[0].scoreLabel} {ranking[0].scoreDelta >= 0 ? '+' : ''}{ranking[0].scoreDelta}</b>
-                <p>选择后总活性 {ranking[0].activityAfter} · F8 后自动刷新</p>
-                {ranking[0].recommendedTargetIds?.length ? <p>目标：{ranking[0].recommendedTargetIds.map((id) => id.replace('slot-', '槽位 ')).join('、')}</p> : null}
-                {recognitionWarning && <p>{recognitionWarning}</p>}
+                <SettlementSummary result={ranking[0]} />
+                <p>{ranking[0].activityRange
+                  ? `预计总活性范围 ${ranking[0].activityRange.minimum}–${ranking[0].activityRange.maximum}`
+                  : `选择后总活性 ${ranking[0].activityAfter}`} · {follow?.enabled ? '游戏结算后自动刷新' : '单次识别后刷新'}</p>
+                {ranking[0].warnings.length > 0 && <p>{ranking[0].warnings.join('；')}</p>}
+                {ranking[0].card.resolutionObservation && <p>后续随机移除或触发，请按游戏实际结果核对。</p>}
+                {candidateWarning && <p>{candidateWarning}</p>}
               </div>
             ) : (
-              <div className="floating-recommendation"><strong>暂不能推荐</strong><p>{recognitionWarning || '未识别到可计算的候选药剂，请截图识别或手动录入。'}</p></div>
+              <div className="floating-recommendation"><strong>暂不能推荐</strong><p>{candidateWarning || '未识别到可计算的候选药剂，请截图识别或手动录入。'}</p></div>
             )}
+            <FloatingMonsters state={state}
+              result={!followWaiting && !pendingResolution && !awaitingEndRound && !persistentOffers.length && recognitionPhase !== 'surgeryPlanSelection' ? ranking[0] : undefined}
+              snapshot={recognizedMonsters === state.monsters && !recognitionNeedsReview ? lastMonsterSnapshot : null} />
             <div className="floating-actions">
               <button type="button" className="primary-button" disabled={floatingBusy} onClick={() => void toggleFloatingMode()}>
                 展开完整界面
               </button>
-              <button type="button" disabled={hotkeyBusy || recognitionBusy} onClick={() => void recognizeScreen()}>{hotkeyBusy || recognitionBusy ? '识别中…' : '截图识别 / F8'}</button>
+              <button type="button" disabled={hotkeyBusy || recognitionBusy} onClick={() => void recognizeScreen()}>识别一次 / F8</button>
             </div>
+            {persistentOffers.length > 0 && <div className="follow-permanent-confirm">
+              <p>在游戏中选择后，点此记录实际用具（不替你点击游戏）：</p>
+              {persistentOffers.map((offer,index) => <button type="button" key={`${index}-${offer.name}`} disabled={!offer.cardId}
+                onClick={() => offer.cardId && choosePersistentOffer(offer.cardId)}>已选：{offer.name}</button>)}
+            </div>}
+            <small aria-live="polite">{captureReceipt}</small>
             <small>{status}</small>
           </section>
         </main>
@@ -1075,7 +1249,8 @@ function App() {
         />
 
         <div className="center-column">
-          {recognitionNeedsReview ? (
+          {!followWaiting && <OpeningWarning state={state} offers={persistentOffers} />}
+          {followWaiting ? <section className="panel"><h2>等待实时同步，暂停旧推荐</h2><p>{follow?.message}</p></section> : recognitionNeedsReview ? (
             <section className="panel" role="alert">
               <h2>怪物信息待核对，已暂停推荐</h2>
               <p>{state.recognitionReview?.join('；')}</p>
@@ -1106,8 +1281,9 @@ function App() {
                       {card ? (
                         <>
                           <p>{card.description}</p>
+                          {card.modelWarning && <p>{card.modelWarning}</p>}
                           <strong>{result?.scoreDelta && result.scoreDelta > 0
-                            ? `预计后续收益 +${Math.round(result.scoreDelta)}`
+                            ? `后续战略评分 +${Math.round(result.scoreDelta)}`
                             : '暂无可确认的后续收益'}</strong>
                           <button
                             type="button"
@@ -1146,6 +1322,8 @@ function App() {
                 ))}
               </div>
             </div>
+            <StartupAdvice state={state} loadout={persistentLoadout} ranking={ranking}
+              cards={offeredCards.filter(card => recognizedCandidateIds === null || recognizedCandidateIds.includes(card.id))} />
             <div className={`candidate-grid count-${offerCount}`}>
               {offeredCards.map((card, index) => {
                 const result = rankCards(state, [card], persistentLoadout, evaluationContext)[0]
@@ -1158,9 +1336,10 @@ function App() {
                     result={result}
                     recommended={ranking[0]?.card.id === card.id}
                     pending={pendingResolution?.kind === 'candidate' && pendingResolution.cardId === card.id}
-                    disabled={awaitingEndRound}
+                    disabled={awaitingEndRound || Boolean(follow?.enabled)}
+                    following={Boolean(follow?.enabled)}
                     onCardChange={(id) => setCandidateAt(index, id)}
-                    onApply={() => beginApplyCard(card.id, result.recommendedTargetIds)}
+                    onApply={() => beginApplyCard(card.id, result?.recommendedTargetIds)}
                   />
                 )
               })}
@@ -1168,26 +1347,30 @@ function App() {
           </section>
           )}
 
-          <RedrawStrip
+          {!persistentOffers.length && (coverageWarning || hasRangePreview || hasStartupPriority ? <section className="panel"><p>{coverageWarning || (hasStartupPriority ? '当前按常驻启动路线优先，不用纯活性分数自动判断洗牌；仍可手动洗牌。' : '当前含分支收益范围：不根据保守端点自动建议洗牌或药箱，仍可手动洗牌。')}</p>
+            <button type="button" className="primary-button" disabled={rerollsRemaining <= 0 || Boolean(follow?.enabled)} onClick={useReroll}>{follow?.enabled ? '请在游戏中洗牌' : '手动洗牌'}（剩余 {rerollsRemaining} 次）</button>
+          </section> : <RedrawStrip
             currentBest={currentBest}
             scoreLabel={ranking[0]?.scoreLabel ?? '即时活性'}
             estimate3={redraw3}
             rerollsRemaining={rerollsRemaining}
             recommended={opportunityDecision.preferRedraw}
             onReroll={useReroll}
-          />
+          />)}
           </>}
         </div>
 
-        {recognitionNeedsReview ? (
+        {followWaiting ? <aside className="panel"><h2>等待稳定画面</h2><p>同步完成后自动恢复推荐，无需再按 F8。</p></aside> : recognitionNeedsReview ? (
           <aside className="panel"><h2>暂不能推荐</h2><p>先确认怪物信息，避免用旧稀有度计算常驻收益。</p></aside>
         ) : persistentOffers.length > 0 ? (
           <aside className="panel"><PersistentRecommendation offers={persistentOffers} ranking={persistentOfferRanking} /></aside>
         ) : ranking.length > 0 ? <RecommendationPanel
           ranking={ranking}
+          coverageWarning={coverageWarning}
           onApply={applyRecommendation}
-          disabled={awaitingEndRound}
-        /> : <aside className="panel"><h2>暂不能推荐</h2><p>{recognitionPhase === 'surgeryPlanSelection' ? '手术方案由玩家自行选择。' : recognitionWarning || '请识别完整候选卡或手动录入。'}</p></aside>}
+          disabled={awaitingEndRound || Boolean(follow?.enabled)}
+          following={Boolean(follow?.enabled)}
+        /> : <aside className="panel"><h2>暂不能推荐</h2><p>{recognitionPhase === 'surgeryPlanSelection' ? '手术方案由玩家自行选择。' : candidateWarning || '请识别完整候选卡或手动录入。'}</p></aside>}
       </main>
       )}
 

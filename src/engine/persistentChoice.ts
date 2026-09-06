@@ -31,16 +31,18 @@ export function rankPersistentChoices(
   currentLoadout: PersistentLoadout,
 ): PersistentChoiceEvaluation[] {
   const currentCards = persistentCardsIn(currentLoadout)
-  const before = strategicScore(state, currentCards)
+  const nextRound = { ...state, round: state.round + 1 }
+  const before = strategicScore(nextRound, currentCards)
 
   return choices
     .map((card) => {
-      const after = strategicScore(state, [...currentCards, card])
+      const after = strategicScore(nextRound, currentCards.some(item => item.id === card.id)
+        ? currentCards : [...currentCards, card])
       return {
         card,
         score: after.score,
         scoreDelta: after.score - before.score,
-        nextRoundEndBonus: after.roundEndBonus,
+        nextRoundEndBonus: after.roundEndBonus - before.roundEndBonus,
         analysis: [
           '新获得的常驻不会追溯结算当前奖励回合；以下收益从下一回合结束开始投射',
           ...after.analysis,

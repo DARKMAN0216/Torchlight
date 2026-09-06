@@ -11,6 +11,82 @@ import server
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_name_retry_maps_enlarged_box_back_to_original_image(self):
+        recognizer = server.GameRecognizer.__new__(server.GameRecognizer)
+        recognizer.engine = MagicMock()
+        line = server.OcrLine('蝎兽', .99, [[300,6],[420,6],[420,60],[300,60]])
+        with patch.object(server, 'result_lines', return_value=[line]):
+            result = recognizer.retry_monster_name(np.zeros((1440,2560,3),dtype=np.uint8), 2)
+        self.assertEqual(result.text, '蝎兽')
+        self.assertAlmostEqual(result.box[0][0], int(.438*2560)+100)
+        self.assertGreater(result.center_y/1440, .354)
+        self.assertLess(result.center_y/1440, .379)
+        recognizer.engine.assert_called_once()
+
+    def test_name_retry_rejects_ambiguous_low_confidence_and_numeric_text(self):
+        recognizer = server.GameRecognizer.__new__(server.GameRecognizer)
+        recognizer.engine = MagicMock()
+        box = [[0,0],[40,0],[40,20],[0,20]]
+        for lines in [[],[server.OcrLine('蝎兽',.84,box)],
+                      [server.OcrLine('141x78',.99,box)],
+                      [server.OcrLine('蝎兽',.99,box),server.OcrLine('异兽',.99,box)]]:
+            with patch.object(server,'result_lines',return_value=lines):
+                self.assertIsNone(recognizer.retry_monster_name(np.zeros((1440,2560,3),dtype=np.uint8),2))
+
+    def test_unknown_name_without_icon_or_numbers_is_not_an_empty_slot(self):
+        recognizer = server.GameRecognizer.__new__(server.GameRecognizer)
+        recognizer.fast_ocr = True
+        name = server.OcrLine('未收录怪物', .98, [[480,510],[565,510],[565,533],[480,533]])
+        round_line = server.OcrLine('7/13', .99, [[110,510],[210,510],[210,550],[110,550]])
+        with patch.object(recognizer, '_ocr_lines', return_value=[name, round_line]), \
+             patch.object(recognizer, 'recognize_race_icon', return_value=None):
+            result = recognizer._recognize(np.zeros((1440,2560,3), dtype=np.uint8), 'test')
+        slots = result['snapshot']['monsterSlots']
+        self.assertTrue(slots[0]['occupied']['value'])
+        self.assertEqual(slots[0]['name']['value'], '未收录怪物')
+        self.assertTrue(all(not slot['occupied']['value'] for slot in slots[1:]))
+
+    def test_hook_only_buffers_unmodified_physical_f8_edges(self):
+        buffer = server.F8HookBuffer()
+        buffer.record(65, 0x100, 0, 123, False, 1)
+        buffer.record(0x77, 0x100, 0x10, 123, False, 2)
+        buffer.record(0x77, 0x100, 0, 123, True, 3)
+        buffer.record(0x77, 0x100, 0, 123, False, 4)  # modifiers released while F8 held
+        self.assertEqual(list(buffer.events), [])
+        buffer.record(0x77, 0x101, 0, 123, False, 5)
+        buffer.record(0x77, 0x100, 0, 123, False, 6)
+        buffer.record(0x77, 0x100, 0, 123, False, 7)
+        self.assertEqual(list(buffer.events), [(123, 6)])
+
+    def test_hook_poll_and_wm_share_one_dispatch(self):
+        for order in [('f8-hook', 'wm-hotkey'), ('wm-hotkey', 'f8-hook')]:
+            store = MagicMock()
+            dispatcher = server.F8Dispatcher(store)
+            dispatcher.dispatch(order[0], 1)
+            dispatcher.dispatch(order[1], 1.01)
+            dispatcher.sample(True, True, 1.02)
+            store.trigger.assert_called_once()
+            dispatcher.sample(False, False, 2)
+            dispatcher.dispatch('f8-hook', 3)
+            self.assertEqual(store.trigger.call_count, 2)
+
+    def test_hook_always_passes_keys_to_other_apps(self):
+        user32 = MagicMock()
+        user32.SetWindowsHookExW.return_value = 456
+        user32.CallNextHookEx.return_value = 987
+        with patch.object(server.ctypes, 'WinDLL'):
+            handle, callback = server.install_f8_hook(user32, server.F8HookBuffer())
+        self.assertEqual(handle, 456)
+        self.assertEqual(callback(-1, 0x100, 0), 987)
+        user32.CallNextHookEx.assert_called_once_with(None, -1, 0x100, 0)
+
+    def test_unknown_monster_name_is_available_for_manual_dictionary(self):
+        line = server.OcrLine('新种怪物', .95, [[480,510],[565,510],[565,533],[480,533]])
+        noise = server.OcrLine('常', .9, [[510,490],[530,490],[530,510],[510,510]])
+        self.assertEqual(server.GameRecognizer.monster_name_line([noise, line], 1440).text, '新种怪物')
+        self.assertIsNone(server.GameRecognizer.monster_name_line([noise], 1440))
+        self.assertIsNone(server.GameRecognizer.monster_name_line([line, line], 1440))
+
     def test_icon_ocr_noise_does_not_ambiguate_name_rarity(self):
         recognizer = server.GameRecognizer.__new__(server.GameRecognizer)
         image = np.zeros((1440, 2560, 3), dtype=np.uint8)
@@ -69,7 +145,8 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(store.payload()['status'], 'recognizing')
             self.assertEqual(store.payload()['sequence'], 1)
             thread.return_value.start.assert_called_once()
-        with patch.object(server, 'capture_torchlight_window', return_value='image'):
+        with patch.object(server, 'capture_torchlight_window', return_value='image'), \
+             patch.object(server, 'find_torchlight_window', return_value=(123, server.ClientRegion(0,0,2560,1440))):
             store._recognize()
         self.assertEqual(store.payload()['status'], 'completed')
         self.assertEqual(store.payload()['sequence'], 1)
@@ -77,7 +154,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_capture_failure_is_reported(self):
         store = server.HotkeyRecognitionStore(MagicMock())
-        with patch.object(server, 'capture_torchlight_window', side_effect=RuntimeError('game unavailable')):
+        with patch.object(server, 'capture_torchlight_window', side_effect=RuntimeError('game unavailable')), \
+             patch.object(server, 'find_torchlight_window', return_value=(123, server.ClientRegion(0,0,2560,1440))):
             store._recognize()
         self.assertEqual(store.payload()['status'], 'failed')
         self.assertEqual(store.payload()['error'], 'game unavailable')
@@ -183,7 +261,8 @@ class RuntimeTests(unittest.TestCase):
     def test_elapsed_time_stops_after_failure(self):
         store = server.HotkeyRecognitionStore(MagicMock())
         store._started_at = time.perf_counter() - 1
-        with patch.object(server, 'capture_torchlight_window', side_effect=RuntimeError('test')):
+        with patch.object(server, 'capture_torchlight_window', side_effect=RuntimeError('test')), \
+             patch.object(server, 'find_torchlight_window', return_value=(123, server.ClientRegion(0,0,2560,1440))):
             store._recognize()
         elapsed = store.payload()['elapsedMs']
         with patch.object(server.time, 'perf_counter', return_value=time.perf_counter() + 100):
@@ -191,6 +270,14 @@ class RuntimeTests(unittest.TestCase):
 
 
 class HttpRoutingTests(unittest.TestCase):
+    def test_choice_controls_are_local_and_do_not_run_ocr(self):
+        self.store.choices.payload.return_value = {'enabled': False, 'records': []}
+        self.assertEqual(self.request('POST','/choices/disable')[0],200)
+        self.store.choices.reset.assert_called_once_with(False)
+        self.store.trigger.assert_not_called()
+        self.assertEqual(self.request('POST','/choices/enable','https://example.com')[0],403)
+        self.store.choices.reset.assert_called_once()
+
     def setUp(self):
         self.store = MagicMock()
         self.store.trigger.return_value = True
@@ -224,6 +311,18 @@ class HttpRoutingTests(unittest.TestCase):
     def test_get_and_options_do_not_trigger_capture(self):
         self.assertEqual(self.request('GET', '/trigger-capture')[0], 404)
         self.store.trigger.assert_not_called()
+
+    def test_follow_start_is_disabled_and_legacy_pause_still_works(self):
+        self.assertEqual(self.request('POST','/follow/start')[0],409)
+        self.store.follow.set_enabled.assert_not_called()
+        self.assertEqual(self.request('POST','/follow/pause')[0],200)
+        self.store.follow.set_enabled.assert_called_with(False)
+        self.assertEqual(self.request('GET','/hotkey-recognition')[0],200)
+        self.store.follow.touch.assert_called_once()
+
+    def test_untrusted_origin_cannot_enable_follow(self):
+        self.assertEqual(self.request('POST','/follow/start','https://example.com')[0],403)
+        self.store.follow.set_enabled.assert_not_called()
 
     def test_untrusted_origin_cannot_trigger_capture(self):
         self.assertEqual(self.request('POST', '/trigger-capture', 'https://example.com')[0], 403)

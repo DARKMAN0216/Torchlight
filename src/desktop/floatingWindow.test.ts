@@ -46,7 +46,7 @@ describe('floating desktop window', () => {
   it('enters at logical size and restores physical size without DPI multiplication', async () => {
     const previous = await changeFloatingWindow(true, null)
     expect(native.window.setSize).toHaveBeenLastCalledWith(expect.objectContaining({
-      type: 'Logical', width: 430, height: 340,
+      type: 'Logical', width: 460, height: 680,
     }))
     expect(native.window.setAlwaysOnTop).toHaveBeenLastCalledWith(true)
     expect(await changeFloatingWindow(false, previous)).toBeNull()

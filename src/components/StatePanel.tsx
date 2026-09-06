@@ -188,7 +188,7 @@ export function StatePanel({
               onStateChange({ ...state, mode: event.target.value as DecisionMode })
             }
           >
-            <option value="activity">即时活性最高</option>
+            <option value="activity">本轮活性（含常驻）</option>
             <option value="preserve">保留阵容（启发式）</option>
             <option value="strategic">常驻协同（战略模型）</option>
           </select>

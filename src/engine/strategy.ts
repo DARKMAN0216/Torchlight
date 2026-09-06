@@ -29,7 +29,7 @@ interface StrategicRuleEvaluation {
 }
 
 function activeGroups(state: GameState): MonsterGroup[] {
-  return state.monsters.filter((monster) => monster.race !== null)
+  return state.monsters.filter((monster) => monster.race !== null && monster.quantity > 0)
 }
 
 function evaluateRule(groups: MonsterGroup[], rule: StrategicRule): StrategicRuleEvaluation {

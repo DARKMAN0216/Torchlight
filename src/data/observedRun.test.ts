@@ -195,9 +195,9 @@ describe('observed gameplay run', () => {
 
     expect(mapped.every(Boolean)).toBe(true)
     expect(mapped.map((card) => card!.modelCoverage ?? 'confirmed')).toEqual([
-      'confirmed',
       'partial',
-      'unresolved',
+      'partial',
+      'partial',
     ])
   })
 

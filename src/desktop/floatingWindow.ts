@@ -32,7 +32,7 @@ export async function changeFloatingWindow(
         step = '调整浮窗最小尺寸'
         await appWindow.setMinSize(new LogicalSize(360, 280))
         step = '调整浮窗尺寸'
-        await appWindow.setSize(new LogicalSize(430, 340))
+        await appWindow.setSize(new LogicalSize(460, 680))
       } catch (error) {
         // Best-effort rollback; keep the original failure visible to the user.
         await appWindow.setAlwaysOnTop(false).catch(() => {})

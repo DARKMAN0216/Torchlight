@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+from collections import deque
 from contextlib import contextmanager
 from ctypes import wintypes
 from dataclasses import dataclass
@@ -19,6 +20,9 @@ from typing import Any
 import cv2
 import numpy as np
 from rapidocr import RapidOCR
+from follow import FollowController
+from choice_tracking import ChoiceTracker, run_mouse_listener
+from phase_detection import detect_phase
 
 
 REGIONS = {
@@ -95,6 +99,26 @@ class HotkeyRecognitionStore:
         self._source = "none"
         self._events: list[dict[str, Any]] = []
         self.polling_active = False
+        self.hook_active = False
+        self.choices = ChoiceTracker()
+        self.follow = FollowController(capture_follow_window, recognizer.recognize, self.publish_follow)
+        self.follow.message = '单次识别模式 · 按 F8 截图一次'
+
+    def toggle_follow(self, source='f8'):
+        enabled = self.follow.toggle()
+        self.trace('follow-toggle', source=source, enabled=enabled)
+        return enabled
+
+    def publish_follow(self, result, generation):
+        with self._lock:
+            self._sequence += 1
+            self._source = 'continuous-follow'
+            self._status = 'completed'
+            self._error = None
+            self._result = result
+            self._finished_at = time.perf_counter()
+            self._started_at = self._finished_at - result.get('diagnostics', {}).get('latencyMs', 0) / 1000
+            self._follow_generation = generation
 
     def trace(self, event: str, **details: Any) -> None:
         entry = {"at": datetime.now(timezone.utc).isoformat(), "event": event, **details}
@@ -103,6 +127,8 @@ class HotkeyRecognitionStore:
         print("[capture] " + json.dumps(entry, ensure_ascii=False), flush=True)
 
     def trigger(self, source: str = "wm-hotkey") -> bool:
+        if self.follow.enabled:
+            self.follow.set_enabled(False)
         with self._lock:
             if self._status == "recognizing":
                 return False
@@ -114,28 +140,49 @@ class HotkeyRecognitionStore:
             self._result = None
             self._error = None
         self.trace("request-start", source=source, sequence=self._sequence)
-        threading.Thread(target=self._recognize, name="vorax-hotkey-recognition", daemon=True).start()
+        choice_generation = self.choices.begin_capture()
+        threading.Thread(target=self._recognize, args=(self.follow.generation, choice_generation), name="vorax-hotkey-recognition", daemon=True).start()
         return True
 
-    def _recognize(self) -> None:
+    def _recognize(self, generation=None, choice_generation=None) -> None:
         try:
+            before = find_torchlight_window()
             result = self._recognizer.recognize(capture_torchlight_window(), "torchlight-" + self._source)
+            after = find_torchlight_window()
+            hwnd, region = after
+            binding = (hwnd, region.left, region.top, region.width, region.height) if before == after else None
+            self.choices.observe(result['snapshot'], binding, choice_generation)
             with self._lock:
+                if generation is not None and generation != self.follow.generation:
+                    if self._status == 'recognizing':
+                        self._status = 'idle'
+                    return
                 self._finished_at = time.perf_counter()
                 self._status = "completed"
                 self._result = result
         except Exception as error:  # noqa: BLE001
+            self.choices.invalidate('截图失败，选择未校验；请重新 F8')
             with self._lock:
+                if generation is not None and generation != self.follow.generation:
+                    if self._status == 'recognizing':
+                        self._status = 'idle'
+                    return
                 self._finished_at = time.perf_counter()
                 self._status = "failed"
                 self._error = str(error)
         self.trace("request-end", status=self._status, error=self._error)
 
     def payload(self) -> dict[str, Any]:
+        follow = self.follow.payload()
+        choices = self.choices.payload()
         with self._lock:
             return {
+                "choices": choices,
+                "follow": follow,
+                "followGeneration": getattr(self, '_follow_generation', None),
                 "sequence": self._sequence,
                 "sessionId": self.session_id,
+                "hookActive": self.hook_active,
                 "elapsedMs": round(((self._finished_at or time.perf_counter()) - self._started_at) * 1000) if self._started_at else 0,
                 "triggerSource": self._source,
                 "pollingActive": self.polling_active,
@@ -319,15 +366,36 @@ class GameRecognizer:
             return None
         return rarity, min(0.98, share)
 
-    def recognize_name_rarity(self, image: np.ndarray, lines: list[OcrLine]) -> dict[str, Any] | None:
-        height, width = image.shape[:2]
+    @staticmethod
+    def monster_name_line(lines: list[OcrLine], height: int) -> OcrLine | None:
         names = [line for line in lines
                  if 0.355 <= line.center_y / height <= 0.379
                  and re.search(r"[\u4e00-\u9fff]", line.text)
                  and not re.search(r"[0-9×]", line.text)]
+        return names[0] if len(names) == 1 else None
+
+    def retry_monster_name(self, image: np.ndarray, slot_index: int) -> OcrLine | None:
+        """Retry a missed short name locally; caller must have numeric occupant evidence."""
+        x, _, w, _ = MONSTER_SUMMARIES[slot_index]
+        tile, (left, top) = crop(image, (x, .354, w, .018))
+        if not tile.size:
+            return None
+        scale = 3
+        enlarged = cv2.resize(tile, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        lines = result_lines(self.engine(enlarged, use_det=True, use_cls=False))
+        names = [line for line in lines if line.confidence >= .85
+                 and re.fullmatch(r'[\u4e00-\u9fff]{2,24}', re.sub(r'\s+', '', line.text))]
         if len(names) != 1:
             return None
         line = names[0]
+        return OcrLine(re.sub(r'\s+', '', line.text), line.confidence,
+                       [[px / scale + left, py / scale + top] for px, py in line.box])
+
+    def recognize_name_rarity(self, image: np.ndarray, lines: list[OcrLine]) -> dict[str, Any] | None:
+        height, width = image.shape[:2]
+        line = self.monster_name_line(lines, height)
+        if line is None:
+            return None
         left, top = np.min(line.box, axis=0)
         right, bottom = np.max(line.box, axis=0)
         # Trim OCR padding above/below glyphs, away from race/activity icons.
@@ -372,6 +440,8 @@ class GameRecognizer:
             *MONSTER_SUMMARIES,
             (0.285, 0.62, 0.485, 0.075),
             (0.285, 0.72, 0.485, 0.12),
+            (0.30, 0.87, 0.45, 0.055),  # Card type footers survive a raised card hiding the heading.
+            (.61, .925, .06, .045),
         ]
         tiles = [crop(image, region) for region in regions]
         padding = 20
@@ -451,7 +521,6 @@ class GameRecognizer:
 
         monster_slots: list[dict[str, Any]] = []
         for index, (region, lines) in enumerate(zip(MONSTER_SUMMARIES, monster_lines), start=1):
-            joined = " ".join(line.text for line in lines)
             pair_line = next(
                 (
                     line for line in lines
@@ -463,17 +532,29 @@ class GameRecognizer:
                 re.search(r"(\d+)\s*[×xX]\s*(\d+)", pair_line.text.replace(",", ""))
                 if pair_line else None
             )
-            known_name = next((name for name in MONSTER_RACES if name in joined), None)
+            name_line = self.monster_name_line(lines, height)
+            if pair_match and (name_line is None or name_line.confidence < .85):
+                retried = self.retry_monster_name(image, index - 1)
+                if retried:
+                    if name_line is not None:
+                        lines.remove(name_line)
+                    lines.append(retried)
+                    all_lines.append(retried)
+                    name_line = retried
+            raw_name = re.sub(r"\s+", "", name_line.text) if name_line else None
+            known_name = raw_name if raw_name in MONSTER_RACES else None
             confidence = max((line.confidence for line in lines), default=0.0)
             icon_result = self.recognize_race_icon(image, index - 1)
-            occupied = pair_match is not None or known_name is not None or icon_result is not None
+            # An unknown but legible monster name is still evidence of an
+            # occupant; failing dictionary/icon lookup must not turn it empty.
+            occupied = pair_match is not None or name_line is not None or icon_result is not None
             slot: dict[str, Any] = {
                 "slotId": f"slot-{index}",
                 "occupied": recognized(occupied, max(confidence, icon_result[1] if icon_result else 0) if occupied else 0.86, region, width, height),
             }
-            if known_name:
-                name_confidence = max((line.confidence for line in lines if known_name in line.text), default=confidence)
-                slot["name"] = recognized(known_name, name_confidence, region, width, height)
+            if occupied and name_line:
+                # Return unknown names too: the client owns the user's editable dictionary.
+                slot["name"] = recognized(raw_name, name_line.confidence, region, width, height)
             if icon_result:
                 icon_race, icon_confidence = icon_result
                 slot["raceId"] = recognized(
@@ -495,8 +576,7 @@ class GameRecognizer:
                 rarity = self.recognize_name_rarity(image, lines)
                 if rarity:
                     slot["rarity"] = rarity
-                else:
-                    issues.append(f"槽位 {index} 名称颜色不足以确认稀有度，请人工核对")
+                # Missing visual attributes are reviewed after client-side name lookup.
             if pair_match:
                 unit_activity = int(pair_match.group(1))
                 quantity = int(pair_match.group(2))
@@ -506,16 +586,15 @@ class GameRecognizer:
                 slot["displayedTotalActivity"] = recognized(unit_activity * quantity, pair_confidence * 0.96, region, width, height)
             monster_slots.append(slot)
 
-        selection_text = " ".join(line.text for line in selection_lines)
-        phase = "unknown"
-        for word, phase_id in PHASE_WORDS:
-            if word in selection_text:
-                phase = phase_id
-                break
-
         candidate_lines = self._candidate_title_lines(selection_lines, width, height)
+        phase, phase_confidence, phase_issue = detect_phase(selection_lines, candidate_lines, width, height)
+        if phase_issue:
+            issues.append(phase_issue)
         candidate_names = [
-            recognized(line.text, line.confidence, REGIONS["selection"], width, height)
+            {"value": line.text, "confidence": line.confidence,
+             "sourceRegion": {"x": min(p[0] for p in line.box), "y": min(p[1] for p in line.box),
+                              "width": max(p[0] for p in line.box)-min(p[0] for p in line.box),
+                              "height": max(p[1] for p in line.box)-min(p[1] for p in line.box)}}
             for line in candidate_lines
         ]
         if phase == "potionSelection" and len(candidate_names) >= 5:
@@ -526,7 +605,7 @@ class GameRecognizer:
         snapshot: dict[str, Any] = {
             "capturedAt": datetime.now(timezone.utc).isoformat(),
             "sourceImage": {"width": width, "height": height, "layoutProfileId": "normalized-16x9-v1"},
-            "phase": recognized(phase, 0.9 if phase != "unknown" else 0.2, REGIONS["selection"], width, height),
+            "phase": recognized(phase, phase_confidence, REGIONS["selection"], width, height),
             "candidateCardIds": [],
             "candidateCardNames": candidate_names,
             "monsterSlots": monster_slots,
@@ -537,6 +616,12 @@ class GameRecognizer:
             snapshot["totalRounds"] = recognized(total_rounds, round_confidence, REGIONS["round"], width, height)
         if final_result is not None:
             snapshot["displayedFinalActivity"] = recognized(final_result[0], final_result[1], REGIONS["final_activity"], width, height)
+        reroll_lines = [line for line in all_lines
+                        if .61*width <= line.center_x <= .67*width and .925*height <= line.center_y <= .97*height
+                        and re.fullmatch(r'[0-3]', line.text.strip())]
+        if phase in ('potionSelection', 'expandedPotionSelection') and len(reroll_lines) == 1:
+            line = reroll_lines[0]
+            snapshot['rerollsRemaining'] = recognized(int(line.text.strip()), line.confidence, (.61,.925,.06,.045), width, height)
 
         arithmetic_total = sum(
             slot.get("displayedTotalActivity", {}).get("value", 0)
@@ -667,6 +752,8 @@ def find_torchlight_client_region() -> ClientRegion:
 def require_torchlight_window_foreground(hwnd: int) -> None:
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
     if user32.GetForegroundWindow() != hwnd:
         raise RuntimeError(
             "决策器避让后游戏仍不在前台，请先切回 Torchlight: Infinite 再按 F8；不会捕获其他应用",
@@ -687,6 +774,13 @@ def wait_for_game_foreground(user32, game_hwnd: int, assistant_windows: list[int
                 break
             time.sleep(0.02)
     require_torchlight_window_foreground(game_hwnd)
+
+
+def is_assistant_event_target(user32, hwnd: int) -> bool:
+    """Called only after ownership validation; Tao's event sink is not a UI overlay."""
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    name = ctypes.create_unicode_buffer(256)
+    return bool(user32.GetClassNameW(hwnd, name, len(name))) and name.value == 'Tao Thread Event Target'
 
 
 @contextmanager
@@ -710,7 +804,8 @@ def assistant_hidden_for_capture(game_hwnd: int):
             process_id = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
             if process_image_name(process_id.value) == ASSISTANT_PROCESS_NAME:
-                windows.append(hwnd)
+                if not is_assistant_event_target(user32, hwnd):
+                    windows.append(hwnd)
         return True
 
     if not user32.EnumWindows(collect, 0):
@@ -752,6 +847,47 @@ def capture_torchlight_window() -> np.ndarray:
     return cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
 
 
+def capture_follow_window() -> np.ndarray:
+    """No hiding/reactivation in the continuous path; excluded overlays stay visible."""
+    from mss import mss
+    hwnd, region = find_torchlight_window()
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    if user32.GetForegroundWindow() != hwnd or user32.IsIconic(hwnd):
+        raise RuntimeError('等待游戏前台；切回 Torchlight 后自动继续')
+    # Tauri enables WDA_EXCLUDEFROMCAPTURE only while following. Verify it, rather
+    # than silently OCR-ing an overlaid calculator or repeatedly hiding the window.
+    if sys.getwindowsversion().build < 19041:
+        raise RuntimeError('此系统不支持无闪烁截图排除，请使用单次识别')
+    user32.GetWindowDisplayAffinity.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    blocked = []
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    @callback_type
+    def inspect(window, _):
+        if user32.IsWindowVisible(window) and not user32.IsIconic(window):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(window, ctypes.byref(pid))
+            if process_image_name(pid.value) == ASSISTANT_PROCESS_NAME:
+                if is_assistant_event_target(user32, window):
+                    return True
+                affinity = wintypes.DWORD()
+                if not user32.GetWindowDisplayAffinity(window, ctypes.byref(affinity)) or affinity.value != 0x11:
+                    blocked.append(window)
+        return True
+    if not user32.EnumWindows(inspect, 0):
+        raise RuntimeError('无法校验浮窗截图排除，暂不采集')
+    if blocked:
+        raise RuntimeError('等待新版客户端开启截图排除；请保持客户端在线')
+    require_torchlight_window_foreground(hwnd)
+    with mss() as capture:
+        shot = np.asarray(capture.grab({'left':region.left,'top':region.top,'width':region.width,'height':region.height}))
+    require_torchlight_window_foreground(hwnd)
+    return cv2.cvtColor(shot, cv2.COLOR_BGRA2BGR)
+
+
 class F8Dispatcher:
     """Coalesce WM_HOTKEY and physical-down edges; never repeat a held key."""
 
@@ -784,6 +920,57 @@ def foreground_process_name(user32) -> str:
     return process_image_name(process_id.value)
 
 
+class F8HookBuffer:
+    """Keep only F8 edges, never text/other keys; drain outside the OS callback."""
+
+    def __init__(self, down=False):
+        self.down = down
+        self.events = deque(maxlen=16)
+
+    def record(self, key, message, flags, foreground, modified, now):
+        if key != HOTKEY_VK_F8 or flags & 0x10:  # Ignore injected events.
+            return
+        if message in (0x101, 0x105):
+            self.down = False
+        elif message in (0x100, 0x104):
+            if not self.down and not modified:
+                self.events.append((foreground, now))
+            self.down = True
+
+
+def install_f8_hook(user32, buffer):
+    # Pointer-sized types are essential on 64-bit Windows. Callback only queues;
+    # OCR, process lookup and logging stay outside the input hook.
+    class KeyboardInput(ctypes.Structure):
+        _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD),
+                    ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
+                    ("dwExtraInfo", ctypes.c_size_t)]
+
+    callback_type = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+    user32.CallNextHookEx.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+    user32.CallNextHookEx.restype = ctypes.c_ssize_t
+    user32.SetWindowsHookExW.argtypes = [ctypes.c_int, callback_type, wintypes.HINSTANCE, wintypes.DWORD]
+    user32.SetWindowsHookExW.restype = wintypes.HANDLE
+    user32.UnhookWindowsHookEx.argtypes = [wintypes.HANDLE]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+    @callback_type
+    def callback(code, message, pointer):
+        if code == 0:
+            event = ctypes.cast(pointer, ctypes.POINTER(KeyboardInput)).contents
+            if event.vkCode == HOTKEY_VK_F8:
+                modified = any(user32.GetAsyncKeyState(key) & 0x8000
+                               for key in (0x10, 0x11, 0x12, 0x5B, 0x5C))
+                buffer.record(event.vkCode, message, event.flags, user32.GetForegroundWindow(),
+                              modified, time.perf_counter())
+        return user32.CallNextHookEx(None, code, message, pointer)
+
+    handle = user32.SetWindowsHookExW(13, callback, kernel32.GetModuleHandleW(None), 0)
+    return handle, callback  # Keep callback alive for the whole listener lifetime.
+
+
 def run_global_hotkey(store: HotkeyRecognitionStore) -> None:
     """Listen for F8 without taking foreground focus away from the game."""
     if sys.platform != "win32":
@@ -806,11 +993,20 @@ def run_global_hotkey(store: HotkeyRecognitionStore) -> None:
     store.hotkey_registered = True
     store.hotkey_error = None
     store.polling_active = True
-    print("全局快捷键已注册：F8（游戏保持前台时按下即可识别）")
+    print("全局快捷键已注册：F8（单次截图识别）")
     message = wintypes.MSG()
     dispatcher = F8Dispatcher(store)
     # Do not interpret F8 held while starting the service as a fresh press.
     dispatcher.down = bool(user32.GetAsyncKeyState(HOTKEY_VK_F8) & 0x8000)
+    hook_buffer = F8HookBuffer(dispatcher.down)
+    hook_handle = None
+    try:
+        hook_handle, hook_callback = install_f8_hook(user32, hook_buffer)
+    except Exception as error:
+        store.trace("f8-hook-error", error=str(error))
+    store.hook_active = bool(hook_handle)
+    store.trace("f8-hook-registration", active=store.hook_active,
+                error=None if hook_handle else ctypes.get_last_error())
     try:
         while True:
             while user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 1):
@@ -819,6 +1015,15 @@ def run_global_hotkey(store: HotkeyRecognitionStore) -> None:
                 if message.message == WM_HOTKEY and message.wParam == HOTKEY_ID:
                     store.trace("wm-hotkey", foreground=foreground_process_name(user32))
                     dispatcher.dispatch("wm-hotkey", time.perf_counter())
+            while hook_buffer.events:
+                foreground_hwnd, pressed_at = hook_buffer.events.popleft()
+                process_id = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(foreground_hwnd, ctypes.byref(process_id))
+                foreground = process_image_name(process_id.value)
+                allowed = foreground in (TORCHLIGHT_PROCESS_NAME, ASSISTANT_PROCESS_NAME)
+                store.trace("f8-hook", foreground=foreground, allowed=allowed)
+                if allowed:
+                    dispatcher.dispatch("f8-hook", pressed_at)
             down = bool(user32.GetAsyncKeyState(HOTKEY_VK_F8) & 0x8000)
             allowed = False
             if down and not dispatcher.down:
@@ -834,6 +1039,9 @@ def run_global_hotkey(store: HotkeyRecognitionStore) -> None:
         store.trace("listener-error", error=str(error))
     finally:
         store.polling_active = False
+        store.hook_active = False
+        if hook_handle:
+            user32.UnhookWindowsHookEx(hook_handle)
         store.hotkey_registered = False
         store.hotkey_error = "F8 监听已停止"
         user32.UnregisterHotKey(None, HOTKEY_ID)
@@ -893,11 +1101,12 @@ class RecognitionHandler(BaseHTTPRequestHandler):
                 "hotkeyError": self.hotkey_store.hotkey_error,
                 "sessionId": self.hotkey_store.session_id,
                 "apiVersion": 2,
-                "runtimeVersion": "2026-09-06-rarity-v2",
+                "runtimeVersion": "2026-09-06-phase-fallback-v1",
                 "pollingActive": self.hotkey_store.polling_active,
             })
             return
         if self.path == "/hotkey-recognition":
+            self.hotkey_store.follow.touch()
             self._send(200, self.hotkey_store.payload())
             return
         self._send(404, {"error": "not found"})
@@ -905,6 +1114,18 @@ class RecognitionHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if self._allowed_origin() == "":
             self._send(403, {"error": "origin not allowed"})
+            return
+        if self.path in ('/choices/reset', '/choices/enable', '/choices/disable'):
+            enabled = True if self.path.endswith('/enable') else False if self.path.endswith('/disable') else None
+            self.hotkey_store.choices.reset(enabled)
+            self._send(200, self.hotkey_store.choices.payload())
+            return
+        if self.path in ('/follow/start', '/follow/pause'):
+            if self.path.endswith('/start'):
+                self._send(409, {'error': '已恢复单次识别，请按 F8 或点击识别屏幕'})
+                return
+            self.hotkey_store.follow.set_enabled(False)
+            self._send(200, self.hotkey_store.payload())
             return
         if self.path == "/trigger-capture":
             accepted = self.hotkey_store.trigger("capture-button")
@@ -931,6 +1152,7 @@ class RecognitionHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         if self.path == "/hotkey-recognition":
             return
+        self.hotkey_store.choices.invalidate('导入图片不监听游戏点击；请 F8 读取实时牌面')
         sys.stdout.write(f"[recognizer] {self.address_string()} {format % args}\n")
 
 
@@ -951,15 +1173,18 @@ def main() -> None:
 
     RecognitionHandler.recognizer = recognizer
     RecognitionHandler.hotkey_store = HotkeyRecognitionStore(recognizer)
+    # Continuous observation is disabled; only explicit screenshot requests run OCR.
     server = ThreadingHTTPServer((args.host, args.port), RecognitionHandler)
     print(f"渴瘾屏幕识别服务：http://{args.host}:{args.port}")
-    print("保持本窗口运行；游戏前台按 F8 可截图识别，网页会自动读取结果。")
+    print("保持本窗口运行；每按一次 F8 截图识别一次，不自动循环采集。")
     threading.Thread(
         target=run_global_hotkey,
         args=(RecognitionHandler.hotkey_store,),
         name="vorax-global-hotkey",
         daemon=True,
     ).start()
+    threading.Thread(target=run_mouse_listener, args=(RecognitionHandler.hotkey_store.choices, find_torchlight_window),
+                     name='vorax-game-choice-listener', daemon=True).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -5,6 +5,7 @@ import type {
   RaceId,
   RarityId,
 } from '../types/game'
+import { realCardCatalog } from './realCardCatalog'
 
 export const raceLabels: Record<RaceId, string> = {
   awakened: '觉醒者',
@@ -201,6 +202,28 @@ export const persistentCards: PersistentCard[] = [
     },
   },
   {
+    id: 'mottled-liver',
+    name: '斑斓肝脏',
+    description: '至少有 2 组异魔时，每次发生变异，使所有怪物 +20 活性。',
+    modelWarning: '变异跨越两组异魔门槛时，触发时点待验证，暂不计入该次条件收益；路线评分不是活性期望。',
+    onMutationActivityBonus: { amount: 20, condition: { type: 'minRaceGroups', target: 'aberrant', value: 2 } },
+    strategicProfile: {
+      summary: '凑齐两组异魔后寻找变异机会；不要求变异目标一定是异魔。',
+      rules: [{ type: 'groupThreshold', race: 'aberrant', targetCount: 2, progressValue: 24, completionBonus: 18, label: '双异魔变异路线' }],
+    },
+  },
+  {
+    id: 'human-pupa',
+    name: '人蛹标本',
+    description: '回合结束时，按当前蛊虫组数 X：随机 X 组怪物各 +8 数量，并重复生效 X 次。',
+    modelWarning: '重复 X 次是否包含首次待验证；仅显示 X 至 X+1 轮的保守范围，不是精确期望，不写回怪物。',
+    roundEndQuantityPerRaceGroup: { race: 'swarm', amount: 8 },
+    strategicProfile: {
+      summary: '没有蛊虫时先寻找添加或变异路线；已有蛊虫后保留启动条件并增加蛊虫组数。启动路线是策略偏好，不是假定随机概率或未来收益。',
+      rules: [],
+    },
+  },
+  {
     id: 'hypertrophic-pituitary',
     name: '肿大脑垂体',
     description: '拥有稀有或首领觉醒者时，每回合随机 1 组怪物 +80 活性。',
@@ -363,7 +386,7 @@ export const persistentCards: PersistentCard[] = [
   },
 ]
 
-export const candidateCards: CandidateCard[] = [
+const baseCandidateCards: CandidateCard[] = [
   {
     id: 'mesmerizing-tincture',
     name: '迷魂酊剂',
@@ -534,6 +557,40 @@ export const candidateCards: CandidateCard[] = [
     effects: [],
     followUpOfferCount: 3,
     modelWarning: '“更有可能”的具体抽取权重未知，不能据此计算重抽期望。',
+  },
+  {
+    id: 'active-oviposition-hormone',
+    name: '活性育卵激素',
+    rarity: 2,
+    description: '添加 1 组蛊虫，有 50% 概率额外添加 2 组。',
+    tags: ['真实卡牌', '添加', '概率', '蛊虫', '魔法药剂'],
+    effects: [],
+    evaluationUnavailable: true,
+    modelCoverage: 'unresolved',
+    modelWarning: '已收录效果；新蛊虫的初始数量、单体活性与稀有度未确认，不能用旧示例初值计算期望。请在游戏使用后按 F8 读取实际结果。',
+  },
+  {
+    id: 'fresh-spinal-powder',
+    name: '鲜脊髓药粉',
+    rarity: 3,
+    description: '随机将至多 3 组非异魔怪物变异为异魔；每成功变异 1 组，使随机 3 组异魔各 +42 数量。',
+    tags: ['真实卡牌', '随机目标', '变异', '异魔', '稀有药剂'],
+    effects: [],
+    evaluationUnavailable: true,
+    modelCoverage: 'unresolved',
+    modelWarning: '已收录效果；两阶段随机变异/加数量尚未建模，异魔不足 3 组时的目标分配与重复命中规则待确认。不是零收益，也不能手选随机目标；使用后按 F8 同步。',
+  },
+  {
+    id: 'petrifying-spinal-solution',
+    name: '石化脊髓溶液',
+    rarity: 3,
+    description: '选择 1 组怪物 +20 单体活性；若不是异魔，则变异为异魔并额外 +30 单体活性。',
+    tags: ['真实卡牌', '选择目标', '变异', '异魔', '稀有药剂'],
+    effects: [
+      { type: 'addActivity', target: 'selected', amount: 20 },
+      { type: 'convertRace', target: 'selected', to: 'aberrant', bonusPerUnit: 30, onlyIfDifferent: true },
+    ],
+    targeting: { mode: 'choose', minTargets: 1, maxTargets: 1, prompt: '选择获得活性并在非异魔时变异的怪物' },
   },
   {
     id: 'molting-skin-solution',
@@ -868,6 +925,95 @@ export const candidateCards: CandidateCard[] = [
       },
     ],
   },
+]
+
+const projectionUpdates: Record<string, NonNullable<CandidateCard['projection']>> = {
+  'mutagen-powder': 'randomRareMutation',
+  'green-bile-solution': 'randomMagicMutation',
+  'active-oviposition-hormone': 'egg',
+  'mixed-live-leech-solution': 'leechRarity',
+  'fresh-spinal-powder': 'freshSpinal',
+  'birth-bone-powder': 'birthBone',
+  'gray-matter-spinal-solution': 'graySpinal',
+  'aberrant-anesthetic-tincture': 'aberrantAnesthetic',
+}
+const chooseOne = { mode: 'choose' as const, minTargets: 1, maxTargets: 1, prompt: '选择游戏中的主目标；随机结果使用后按F8同步' }
+const previewNote = '全部已建模分支给出总活性范围，按保守值比较，不假设随机落点等概率；分支或不足目标语义见计算说明。使用后按F8同步真实结果。'
+const addedModels: CandidateCard[] = [
+  { id: 'rare-potion-box-catalog', name: '稀有药剂箱', rarity: 3, description: '', tags: ['真实卡牌', '药剂箱'],
+    effects: [], followUpOfferCount: 3, modelCoverage: 'partial',
+    modelWarning: '展开3张已支持；稀有权重未知，不假定只出稀有药剂。' },
+  { ...baseCandidateCards.find(c=>c.id==='potent-exorcising-powder')!,
+    id: 'exorcising-powder', name: '祛异药粉', description: '', modelCoverage: 'partial',
+    projection: 'exorcise',
+    effects: [{type:'addQuantity',target:'selected',amount:127},
+      {type:'removeObservedGroups',count:1,differentRaceFromSelected:true,allowFewerWhenUnavailable:true}],
+    resolutionObservation: {removals:{count:1,prompt:'记录被移除的不同种群怪物',differentRaceFromPrimaryTarget:true,allowFewerWhenUnavailable:true}},
+    requiresScreenSync: true,
+    modelWarning: '已有不同种群时计算所有移除落点；没有可移除目标时沿用同系列强效药粉的已验证部分生效解释，普通版本仍需实测核对。',
+  },
+  { id: 'cleansing-ointment', name: '清疽油膏', rarity: 3, description: '', tags: ['真实卡牌', '选择目标', '右侧移除'],
+    effects: [], projection: 'cleansing', requiresScreenSync: true, targeting: chooseOne, modelWarning: previewNote },
+  { id: 'pure-live-leech-solution', name: '纯粹活蛭溶液', rarity: 2, description: '', tags: ['真实卡牌', '同种群', '范围计算'],
+    effects: [], projection: 'leechRace', requiresScreenSync: true, targeting: chooseOne, modelWarning: previewNote },
+  { id: 'hollow-spinal-solution', name: '空心脊髓溶液', rarity: 2, description: '', tags: ['真实卡牌', '50%变异', '范围计算'],
+    effects: [], projection: 'hollowSpinal', requiresScreenSync: true, targeting: chooseOne, modelWarning: previewNote },
+  { id: 'twin-hormone-construct', name: '孪生激素-骨卫兵', rarity: 1, description: '', tags: ['真实卡牌', '骨卫兵', '变异'],
+    effects: [{ type: 'convertRace', target: 'selected', to: 'construct' }, { type: 'addQuantity', target: 'selected', amount: 62 }],
+    targeting: chooseOne, modelCoverage: 'confirmed' },
+  { id: 'quick-cardiotonic', name: '速效强心剂', rarity: 3, description: '', tags: ['真实卡牌', '最低总活性'],
+    effects: [{ type: 'addActivity', target: 'selected', amount: 42 }, { type: 'addQuantity', target: 'selected', amount: 42 }],
+    targeting: { mode: 'observedRandom', minTargets: 1, maxTargets: 1, prompt: '记录最低总活性的实际命中目标' },
+    modelCoverage: 'partial', projection: 'lowestBoost', requiresScreenSync: true,
+    modelWarning: previewNote },
+  ...([
+    ['bone-dissolving-ointment', '化骨油膏', 'boneOil'],
+    ['plague-peat-poultice', '疫区泥炭敷料', 'peat'],
+    ['compound-reviving-pill', '复方焕生丸剂', 'compound'],
+  ] as const).map(([id, name, projection]): CandidateCard => ({
+    id, name, projection, rarity: 3, description: '', tags: ['真实卡牌', '范围计算'], effects: [],
+    requiresScreenSync: true, modelCoverage: 'partial', modelWarning: previewNote,
+  })),
+  ...realCardCatalog.filter(e => e.category === '特殊药剂' && /寄生虫卵|寄生虫蛹|寄生蝶|异种万灵药|除虫术|驱魔术|开颅术/.test(e.name))
+    .map((e): CandidateCard => ({
+      id: `modeled-${e.id}`, name: e.name, description: e.effectText, rarity: 3,
+      tags: ['真实卡牌', '特殊药剂', '仅即时效果'], effects: [], requiresScreenSync: true, excludeFromRedraw: true,
+      projection: /除虫术|驱魔术|开颅术/.test(e.name) ? 'seriesRemoval' : 'seriesMutation',
+      targeting: /寄生/.test(e.name) ? chooseOne : e.name.includes('异种万灵药')
+        ? { mode: 'observedRandom', minTargets: 1, maxTargets: 1, prompt: '随机落点不可指定' } : undefined,
+      rankObservedRandom: 'conservative', modelCoverage: 'partial', modelWarning: '仅量化本张即时效果；后续专属发牌由F8识别，不加入普通重抽池。',
+    })),
+]
+
+const knownModels = [...baseCandidateCards, ...addedModels].map((card): CandidateCard => {
+  const source = realCardCatalog.find(entry => entry.name === card.name)
+  const projection = projectionUpdates[card.id] ?? card.projection
+  if (projection) return { ...card, projection, evaluationUnavailable: false, requiresScreenSync: true,
+    requiresNewbornSwarm: projection === 'egg',
+    effects: [], description: source?.effectText ?? card.description, modelCoverage: 'partial',
+    modelWarning: previewNote, tags: ['真实卡牌', '范围计算', 'F8同步'] }
+  if (addedModels.some(item => item.id === card.id)) return { ...card, description: source?.effectText ?? card.description }
+  return card
+})
+// Catalog coverage is separate from numeric coverage. Never silently turn an
+// unimplemented card into a zero-effect card or drop a recognized new candidate.
+export const candidateCards: CandidateCard[] = [
+  ...knownModels,
+  ...realCardCatalog.filter(entry => entry.category !== '手术用具' && !knownModels.some(card => card.name === entry.name))
+    .map((entry): CandidateCard => ({
+      id: `catalog-${entry.id}`, name: entry.name, rarity: entry.category === '普通药剂' ? 1 : entry.category === '魔法药剂' ? 2 : 3,
+      description: entry.effectText, tags: ['真实卡牌', entry.category], effects: [],
+      evaluationUnavailable: true, modelCoverage: 'unresolved', excludeFromRedraw: entry.category === '特殊药剂',
+      ...(entry.name === '异种激素' ? {
+        randomReplacementCount: 4, requiresScreenSync: true,
+        targeting: { mode: 'choose' as const, minTargets: 1, maxTargets: 2, prompt: '选择移除的1–2组；新增随机怪物属性需游戏结果确认' },
+      } : {}),
+      modelWarning: entry.category === '特殊药剂'
+        ? '已收录原文；特殊药剂涉及专属怪物、复制属性或跨回合发牌，缺少完整规则，不进入普通重抽池。'
+        : /添加|获得|同名|复制/.test(entry.effectText)
+          ? '已收录原文；新增/同名怪物基础属性或复制规则需要确认，不能套用旧示例初值。'
+          : '已收录原文；目标规则或复合效果尚未完整建模，禁止当作零收益或套用相似牌效果。',
+    })),
 ]
 
 export const initialState: GameState = {

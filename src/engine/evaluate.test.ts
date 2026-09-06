@@ -61,7 +61,8 @@ describe('rule engine', () => {
       totalActivity(initialState),
     )
 
-    expect(estimate.sampleCount).toBe(324632)
+    const poolSize = candidateCards.filter(card => !card.evaluationUnavailable && !card.requiresNewbornSwarm && !card.excludeFromRedraw).length
+    expect(estimate.sampleCount).toBe(poolSize * (poolSize - 1) * (poolSize - 2) * (poolSize - 3) * (poolSize - 4) / 120)
     expect(Number.isFinite(estimate.minimumBest)).toBe(true)
     expect(Number.isFinite(estimate.maximumBest)).toBe(true)
   })
@@ -722,9 +723,10 @@ describe('rule engine', () => {
     expect(twin.trace).toContainEqual(expect.stringContaining('新增同名组'))
 
     const mixed = ranking.find((result) => result.card.id === 'mixed-live-leech-solution')!
-    expect(mixed.card.modelCoverage).toBe('unresolved')
+    expect(mixed.card.modelCoverage).toBe('partial')
     expect(mixed.activityAfter).toBe(425722)
-    expect(mixed.trace).toContainEqual(expect.stringContaining('暂按 0 已确认收益'))
+    expect(mixed.activityRange).toEqual({ minimum: 425722, maximum: 450956 })
+    expect(mixed.trace).toContainEqual(expect.stringContaining('不足2组'))
 
     const scraper = loadout.find((card) => card.id === 'dirty-bone-scraper')!
     const final = evaluateCard(ranking[0].state, {

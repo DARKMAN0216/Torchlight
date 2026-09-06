@@ -87,7 +87,7 @@ describe('target combination analysis', () => {
     expect(result.analysis).toContain('建议目标：槽位 2')
   })
 
-  it('projects explicitly enumerable random targets but not random races', () => {
+  it('projects random targets without choosing them, and optimizes selectable random-mutation targets', () => {
     const randomTargetCard = candidateCards.find((item) => item.id === 'brain-fog-tincture')!
     const randomRaceCard = candidateCards.find((item) => item.id === 'green-bile-solution')!
 
@@ -95,9 +95,11 @@ describe('target combination analysis', () => {
     const randomRaceResult = rankCards(initialState, [randomRaceCard], persistentCards[0])[0]
 
     expect(randomTargetResult.recommendedTargetIds).toBeUndefined()
-    expect(randomRaceResult.recommendedTargetIds).toBeUndefined()
+    expect(randomRaceResult.recommendedTargetIds).toEqual(['slot-2', 'slot-3'])
+    expect(randomRaceResult.activityRange).toBeDefined()
+    expect(randomRaceResult.card.requiresScreenSync).toBe(true)
     expect(randomTargetResult.warnings).toEqual([])
     expect(randomTargetResult.analysis[0]).toContain('随机结果活性范围')
-    expect(randomRaceResult.warnings).toContain('需要先勾选怪物目标')
+    expect(randomRaceResult.warnings).not.toContain('需要先勾选怪物目标')
   })
 })

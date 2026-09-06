@@ -23,7 +23,7 @@ function combinations<T>(items: T[], count: number): T[][] {
 
 function eligibleMonsters(state: GameState, targeting: CardTargeting): MonsterGroup[] {
   return state.monsters.filter((monster) =>
-    monster.race &&
+    monster.race && monster.quantity > 0 &&
     !(targeting.excludeBoss && monster.rarity === 'boss') &&
     (!targeting.allowedRarities || targeting.allowedRarities.includes(monster.rarity)),
   )

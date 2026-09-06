@@ -25,7 +25,7 @@ export function RedrawStrip({
     <section className="redraw-section">
       <div className="section-heading">
         <div>
-          <h2>重抽决策</h2>
+        <h2>重抽决策 · 仅可计算卡池</h2>
           <p>每局共有 3 次洗牌机会；药剂箱展开不消耗洗牌</p>
         </div>
       </div>

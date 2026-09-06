@@ -1,13 +1,16 @@
 import type { CandidateCard, EvaluationResult } from '../types/game'
+import { synchronizationCopy } from '../recognition/followState'
+import { SettlementSummary } from './SettlementSummary'
 
 interface CandidateCardViewProps {
   slotIndex: number
   card: CandidateCard
   cards: CandidateCard[]
-  result: EvaluationResult
+  result?: EvaluationResult
   recommended: boolean
   pending: boolean
   disabled: boolean
+  following?: boolean
   onCardChange: (id: string) => void
   onApply: () => void
 }
@@ -20,6 +23,7 @@ export function CandidateCardView({
   recommended,
   pending,
   disabled,
+  following = false,
   onCardChange,
   onApply,
 }: CandidateCardViewProps) {
@@ -45,38 +49,41 @@ export function CandidateCardView({
           </option>
         ))}
       </select>
-      <div className="card-tags">{card.tags.join(' · ')}</div>
+      <div className="card-tags">{synchronizationCopy(card.tags.join(' · '), following)}</div>
       <p className="card-description">{card.description}</p>
       <div className="card-rule" />
-      <div className="card-metric">
+      {result ? <><div className="card-metric">
         <span>{result.scoreLabel}变化</span>
         <strong className={result.scoreDelta >= 0 ? 'positive' : 'negative'}>
           {result.scoreDelta >= 0 ? '+' : ''}{result.scoreDelta}
         </strong>
       </div>
       <div className="card-total">
-        <span>选择后活性</span>
-        <strong>{result.activityAfter}</strong>
+        <span>{result.activityRange ? '预计总活性范围' : '选择后活性'}</span>
+        <strong>{result.activityRange ? `${result.activityRange.minimum}–${result.activityRange.maximum}` : result.activityAfter}</strong>
       </div>
+      <SettlementSummary result={result} />
+      </> : <div className="card-metric"><span>已收录 · 尚未量化</span><strong>待确认</strong>
+        {card.requiresNewbornSwarm && <p>请在设置中确认新蛊虫基础属性后计算。</p>}</div>}
       {card.targeting && (
         <div className="card-target-note">
-          {result.recommendedTargetIds?.length
+          {result?.recommendedTargetIds?.length
             ? `建议目标：${result.recommendedTargetIds.map((id) => id.replace('slot-', '槽位 ')).join('、')}`
             : card.targeting.mode === 'observedRandom'
-              ? '需记录随机命中目标'
+              ? following ? '随机结果将自动读取' : '需记录随机命中目标'
               : `需选择 ${card.targeting.minTargets}–${card.targeting.maxTargets} 个目标`}
         </div>
       )}
-      {result.warnings.length > 0 && (!card.targeting || pending) && (
+      {result && result.warnings.length > 0 && (!card.targeting || pending) && (
         <div className="card-warning">{result.warnings.join('，')}</div>
       )}
       {card.modelCoverage && card.modelCoverage !== 'confirmed' && (
         <div className="card-warning">
-          {card.modelCoverage === 'partial' ? '部分建模' : '规则待确认'}：{card.modelWarning}
+          {card.modelCoverage === 'partial' ? '部分建模' : '规则待确认'}：{synchronizationCopy(card.modelWarning ?? '', following)}
         </div>
       )}
-      <button className="card-apply-button" type="button" disabled={disabled} onClick={onApply}>
-        {disabled
+      <button className="card-apply-button" type="button" disabled={disabled || card.evaluationUnavailable || card.requiresScreenSync} onClick={onApply}>
+        {following ? '在游戏使用后自动同步' : card.evaluationUnavailable || card.requiresScreenSync ? '游戏使用后按 F8 同步' : disabled
           ? '等待回合结束结算'
           : card.followUpOfferCount
             ? `展开 ${card.followUpOfferCount} 张药剂`

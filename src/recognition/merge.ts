@@ -2,6 +2,7 @@ import { rarityIds, type CandidateCard, type GameState } from '../types/game'
 import type { PersistentCard } from '../types/game'
 import type { RecognitionScreenPhase, RecognitionSnapshot, RecognizedValue } from './contracts'
 import { validateRecognitionConsistency } from './validation'
+import { monsterDictionary, resolveMonsterName, type MonsterNameEntry } from './monsterDictionary'
 
 const confidenceThreshold = 0.72
 const candidatePhases = new Set<RecognitionScreenPhase>([
@@ -114,11 +115,13 @@ export function mergeRecognitionSnapshot(
   snapshot: RecognitionSnapshot,
   catalog: readonly CandidateCard[],
   persistentCatalog: readonly PersistentCard[] = [],
+  customMonsterNames: readonly MonsterNameEntry[] = [],
 ): RecognitionMergeResult {
   const warnings = [...(snapshot.diagnostics?.issues ?? [])]
   const consistency = validateRecognitionConsistency(
     snapshot.monsterSlots ?? [],
-    snapshot.displayedFinalActivity?.value,
+    snapshot.displayedFinalActivity && snapshot.displayedFinalActivity.confidence >= confidenceThreshold
+      ? snapshot.displayedFinalActivity.value : undefined,
   )
   warnings.push(...consistency.issues)
   const monsterSnapshotRejected = consistency.matchesDisplayedTotal === false
@@ -132,7 +135,21 @@ export function mergeRecognitionSnapshot(
     : currentState.round
   if (round !== currentState.round) appliedFieldCount += 1
 
-  const slotsById = new Map(snapshot.monsterSlots?.map((slot) => [slot.slotId, slot]) ?? [])
+  const dictionary = monsterDictionary(customMonsterNames)
+  // A complete game-screen observation can certify an empty slot locally even
+  // when HUD OCR is unavailable. Never treat an absent slot record as empty,
+  // or clear the whole board from a blank/transition screenshot without a total.
+  const observedSlots = snapshot.monsterSlots ?? []
+  const hasGameContext = snapshot.phase && snapshot.phase.confidence >= confidenceThreshold
+    && snapshot.phase.value !== 'unknown'
+    && observedSlots.length === currentState.monsters.length
+    && currentState.monsters.every((monster) => observedSlots.some((slot) => slot.slotId === monster.id))
+    && observedSlots.some((slot) => slot.occupied.value && slot.occupied.confidence >= confidenceThreshold)
+  const slotsById = new Map(snapshot.monsterSlots?.map((slot) => {
+    const resolved = resolveMonsterName(slot, dictionary)
+    review.push(...resolved.issues)
+    return [slot.slotId, resolved.slot] as const
+  }) ?? [])
   const monsters = currentState.monsters.map((monster) => {
     if (monsterSnapshotRejected) return monster
     const recognizedSlot = slotsById.get(monster.id)
@@ -141,11 +158,15 @@ export function mergeRecognitionSnapshot(
       return monster
     }
     if (!recognizedSlot.occupied.value) {
-      if (consistency.matchesDisplayedTotal !== true) {
-        review.push(`${monster.id} 空槽尚未通过总活性校验`)
+      const alreadyEmpty = !monster.race && monster.quantity === 0 && monster.unitActivity === 0
+      const localEmptyConfirmed = hasGameContext && recognizedSlot.occupied.confidence >= 0.85
+        && !recognizedSlot.name && !recognizedSlot.raceId
+        && !(recognizedSlot.quantity?.value) && !(recognizedSlot.unitActivity?.value)
+      if (!alreadyEmpty && consistency.matchesDisplayedTotal !== true && !localEmptyConfirmed) {
+        review.push(`${monster.id} 空槽证据不足，请在动画结束后重新识别`)
         return monster
       }
-      if (monster.race) appliedFieldCount += 3
+      if (!alreadyEmpty || monster.rarity !== 'common') appliedFieldCount += 4
       return { ...monster, race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 }
     }
 
@@ -168,10 +189,14 @@ export function mergeRecognitionSnapshot(
     if (recognizedSlot.quantity && recognizedSlot.quantity.confidence >= confidenceThreshold) {
       if (next.quantity !== recognizedSlot.quantity.value) appliedFieldCount += 1
       next.quantity = recognizedSlot.quantity.value
+    } else {
+      review.push(`${monster.id} 数量未可靠识别，显示值待核对`)
     }
     if (recognizedSlot.unitActivity && recognizedSlot.unitActivity.confidence >= confidenceThreshold) {
       if (next.unitActivity !== recognizedSlot.unitActivity.value) appliedFieldCount += 1
       next.unitActivity = recognizedSlot.unitActivity.value
+    } else {
+      review.push(`${monster.id} 单体活性未可靠识别，显示值待核对`)
     }
     if (!next.race && (next.quantity > 0 || next.unitActivity > 0)) {
       warnings.push(`${monster.id} 已识别数值但种群未知，保留为空槽等待人工确认`)

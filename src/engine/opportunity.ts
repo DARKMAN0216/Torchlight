@@ -12,6 +12,9 @@ export function applyOpportunityPolicy(
   ranking: EvaluationResult[],
   rerollsRemaining: number,
 ): OpportunityDecision {
+  if (ranking.some(item => item.settlement?.uncertain || (item.state.mode === 'strategic' && item.startup?.safeForPriority))) {
+    return { ranking, preferPotionBox: false, preferRedraw: false }
+  }
   const potionBox = ranking.find((result) => result.card.followUpOfferCount)
   const ordinaryCards = ranking.filter((result) => !result.card.followUpOfferCount)
   const hasGoodOrdinaryCard = ordinaryCards.some(

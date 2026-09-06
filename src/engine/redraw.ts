@@ -5,6 +5,7 @@ import type {
   RedrawEstimate,
 } from '../types/game'
 import { rankCards } from './evaluate'
+import { canEvaluateCard } from './cardAvailability'
 
 function binomial(total: number, selected: number): number {
   if (selected < 0 || selected > total) return 0
@@ -23,7 +24,8 @@ export function estimateRedraw(
   drawCount: number,
   currentBest: number,
 ): RedrawEstimate {
-  const actualCount = Math.min(drawCount, pool.length)
+  const evaluablePool = pool.filter((card) => canEvaluateCard(state, card) && !card.excludeFromRedraw)
+  const actualCount = Math.min(drawCount, evaluablePool.length)
   if (actualCount === 0) {
     return {
       drawCount,
@@ -36,7 +38,7 @@ export function estimateRedraw(
     }
   }
 
-  const sortedScores = rankCards(state, pool, persistent)
+  const sortedScores = rankCards(state, evaluablePool, persistent)
     .map((result) => result.score)
     .sort((left, right) => left - right)
   const sampleCount = binomial(sortedScores.length, actualCount)

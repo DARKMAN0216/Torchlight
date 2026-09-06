@@ -17,6 +17,10 @@ import {
 import { evaluateStrategicState } from './strategy'
 import { enumerateTargetSets } from './targeting'
 import { persistentCardsIn } from './persistent'
+import { projectPotion } from './potionProjection'
+import { canEvaluateCard } from './cardAvailability'
+import { projectPupaScraper } from './pupaScraper'
+import { compareStartup, raceRanges, withStartup } from './startup'
 
 const futureEmptySlotValue = 12
 const baseGroupQuantity = 12
@@ -29,6 +33,7 @@ interface ResolutionRuntime {
 
 export interface RoundEndTransitionProjection {
   bonus: number
+  activityBonus?: number
   analysis: string[]
 }
 
@@ -38,7 +43,7 @@ export function cloneState(state: GameState): GameState {
 
 export function totalActivity(state: GameState): number {
   return state.monsters.reduce(
-    (sum, monster) => sum + monster.quantity * monster.unitActivity,
+    (sum, monster) => sum + (monster.race ? monster.quantity * monster.unitActivity : 0),
     0,
   )
 }
@@ -48,7 +53,7 @@ export function groupTotalActivity(monster: MonsterGroup): number {
 }
 
 function activeGroups(state: GameState): MonsterGroup[] {
-  return state.monsters.filter((monster) => monster.race !== null)
+  return state.monsters.filter((monster) => monster.race !== null && monster.quantity > 0)
 }
 
 function activeRaceIds(state: GameState): RaceId[] {
@@ -154,6 +159,7 @@ function addGroupToFirstEmptySlot(
   persistent: PersistentLoadout,
   trace: string[],
   warnings: string[],
+  base?: GameState['newbornSwarm'],
 ): MonsterGroup | undefined {
   const target = state.monsters.find((monster) => monster.race === null)
   if (!target) {
@@ -165,11 +171,11 @@ function addGroupToFirstEmptySlot(
   const activityGain = Math.round(unitActivity * gainMultiplier(persistent, race))
   target.race = race
   target.rarity = rarity
-  target.quantity = baseGroupQuantity + quantity
-  target.unitActivity = baseGroupUnitActivity + activityGain
+  target.quantity = (base?.quantity ?? baseGroupQuantity) + quantity
+  target.unitActivity = (base?.unitActivity ?? baseGroupUnitActivity) + activityGain
   trace.push(
     `在${target.id.replace('slot-', '槽位 ')}添加${rarityLabels[rarity]}` +
-      `${raceLabels[race]}：基础 ${baseGroupUnitActivity} × ${baseGroupQuantity}` +
+      `${raceLabels[race]}：基础 ${base?.unitActivity ?? baseGroupUnitActivity} × ${base?.quantity ?? baseGroupQuantity}` +
       `，额外 +${quantity} 数量、+${activityGain} 单体活性` +
       `，组总活性 ${target.quantity * target.unitActivity}`,
   )
@@ -187,6 +193,12 @@ function applyEffect(
 ): void {
   if (!conditionMatches(state, effect.condition)) {
     trace.push('条件未满足，跳过一条效果')
+    return
+  }
+
+  if (effect.type === 'withTargets') {
+    for (const nested of effect.effects) applyEffect(state, nested, persistent, trace, warnings,
+      { ...context, selectedMonsterIds: effect.ids }, runtime)
     return
   }
 
@@ -311,22 +323,25 @@ function applyEffect(
     return
   }
 
-  if (effect.type === 'removeLeftOfSelected') {
+  if (effect.type === 'removeLeftOfSelected' || effect.type === 'removeRightOfSelected') {
+    const right = effect.type === 'removeRightOfSelected'
+    const side = right ? '右侧' : '左侧'
     const selectedId = context.selectedMonsterIds?.[0]
     const selectedIndex = state.monsters.findIndex((monster) => monster.id === selectedId)
     if (selectedIndex < 0) return noTarget(trace, warnings, 'selected')
-    if (selectedIndex === 0) {
-      trace.push('所选怪物左侧没有培养皿，不移除怪物')
+    const neighborIndex = selectedIndex + (right ? 1 : -1)
+    if (neighborIndex < 0 || neighborIndex >= state.monsters.length) {
+      trace.push(`所选怪物${side}没有培养皿，不移除怪物`)
       return
     }
-    const target = state.monsters[selectedIndex - 1]
+    const target = state.monsters[neighborIndex]
     if (!target.race) {
-      trace.push(`${target.id.replace('slot-', '槽位 ')}为空，左侧移除未产生损失`)
+      trace.push(`${target.id.replace('slot-', '槽位 ')}为空，${side}移除未产生损失`)
       return
     }
     const removed = { ...target }
     runtime.removedGroups.push(removed)
-    trace.push(`移除所选怪物左侧的${raceLabels[removed.race!]}（${removed.id.replace('slot-', '槽位 ')}）`)
+    trace.push(`移除所选怪物${side}的${raceLabels[removed.race!]}（${removed.id.replace('slot-', '槽位 ')}）`)
     clearGroup(target)
     return
   }
@@ -472,6 +487,7 @@ function applyEffect(
         persistent,
         trace,
         warnings,
+        effect.base,
       )
       if (added) runtime.addedGroups.push(added)
     }
@@ -492,6 +508,8 @@ function applyEffect(
       continue
     }
     const oldRace = target.race
+    if (effect.onlyIfDifferent && oldRace === nextRace) continue
+    const beforeMutation = cloneState(state)
     target.race = nextRace
     const persistentConversionBonus = persistentCardsIn(persistent).reduce(
       (sum, item) => sum + (item.conversionBonusPerUnit?.[nextRace] ?? 0),
@@ -505,6 +523,20 @@ function applyEffect(
       `${raceLabels[oldRace]}（${target.id.replace('slot-', '槽位 ')}）转化为` +
         `${raceLabels[nextRace]}，额外获得 ${bonus} 活性`,
     )
+    if (oldRace !== nextRace) {
+      for (const item of persistentCardsIn(persistent)) {
+        const trigger = item.onMutationActivityBonus
+        if (!trigger || (trigger.toRace && trigger.toRace !== nextRace)) continue
+        if (trigger.condition) {
+          const beforeEligible = conditionMatches(beforeMutation, trigger.condition)
+          const afterEligible = conditionMatches(state, trigger.condition)
+          if (beforeEligible !== afterEligible) warnings.push(`${item.name}：变异跨越触发门槛，时点待验证，未计入该次收益`)
+          if (!beforeEligible || !afterEligible) continue
+        }
+        for (const group of activeGroups(state)) group.unitActivity += trigger.amount
+        trace.push(`${item.name}：变异为${raceLabels[nextRace]}触发，全体 +${trigger.amount} 单体活性`)
+      }
+    }
   }
 }
 
@@ -524,6 +556,10 @@ function applyPersistentRemovalTrigger(
   for (const persistentCard of triggerCards) {
     const trigger = persistentCard.onRemovalQuantityBonus!
     if (!conditionMatches(source, trigger.condition)) continue
+    if (!conditionMatches(state, trigger.condition)) {
+      warnings.push(`${persistentCard.name}：移除跨越常驻门槛，触发时点待验证，暂不计入该条件增量`)
+      continue
+    }
     const triggerCount = runtime.removedGroups.filter(
       (removed) => !trigger.excludedRace || removed.race !== trigger.excludedRace,
     ).length
@@ -600,6 +636,8 @@ function expectedOnAddAdjustment(
         if (successfulIds.has(group.id)) {
           group.race = mutation.toRace
           group.unitActivity += mutation.unitActivityBonus
+          const actual = state.monsters.find(monster => monster.id === group.id)
+          if (actual) { actual.race = group.race; actual.unitActivity = group.unitActivity }
           observedMutationEvents += 1
           analysis.push(
             `${card.name}实际触发：${group.id.replace('slot-', '槽位 ')}变异为` +
@@ -627,6 +665,10 @@ function expectedOnAddAdjustment(
   )
   for (const card of mutationBonusCards) {
     const mutationBonus = card.onMutationActivityBonus!
+    if (mutationBonus.condition) {
+      analysis.push(`${card.name}：新增怪物连锁变异的条件时点待验证，暂不计入该连锁收益`)
+      continue
+    }
     const matchingObservedEvents = runtime.addedGroups.filter(
       (group) => group.race === mutationBonus.toRace,
     ).length
@@ -664,6 +706,10 @@ function evaluateCardInternal(
   context: EvaluationContext = {},
   includeRoundEndProjection = true,
 ): EvaluationResult {
+  if (card.evaluationUnavailable) throw new Error(`${card.name}尚未量化，不能把未知效果作为零收益结算`)
+  if (!canEvaluateCard(source, card)) throw new Error(`${card.name}需要先确认新增蛊虫的基础参数`)
+  if (card.projection) return projectPotion(source, card, persistent, context,
+    (variant, observed) => evaluateCardInternal(source, variant, persistent, observed, includeRoundEndProjection))
   const state = cloneState(source)
   const before = totalActivity(state)
   const trace: string[] = []
@@ -704,24 +750,33 @@ function evaluateCardInternal(
   const preserveBefore = before + activeGroups(source).length * 12
   const strategicBefore = evaluateStrategicState(source, persistent)
   const strategicAfter = evaluateStrategicState(state, persistent)
-  const transitionBefore = source.mode === 'strategic' && includeRoundEndProjection
+  const transitionBefore = includeRoundEndProjection
     ? evaluateRoundEndTransition(source, persistent)
     : { bonus: 0, analysis: [] }
-  const transitionAfter = source.mode === 'strategic' && includeRoundEndProjection
+  const transitionAfter = includeRoundEndProjection
     ? evaluateRoundEndTransition(state, persistent)
     : { bonus: 0, analysis: [] }
+  const beforeBonus = transitionBefore.activityBonus ?? 0
+  const afterBonus = transitionAfter.activityBonus ?? 0
+  const hasSettlement = includeRoundEndProjection && persistentCardsIn(persistent)
+    .some(item => item.roundEndEffect || item.roundEndQuantityPerRaceGroup)
+  const settlementDetails = hasSettlement ? [
+    `常驻本轮结算：保留局面 ${beforeBonus >= 0 ? '+' : ''}${beforeBonus} → 选牌后 ${afterBonus >= 0 ? '+' : ''}${afterBonus}，变化 ${afterBonus - beforeBonus >= 0 ? '+' : ''}${afterBonus - beforeBonus}`,
+    ...transitionAfter.analysis,
+    '仅预览本轮结束，不预测未来发牌；即时局面不重复写入常驻结算。',
+  ] : []
   const score = source.mode === 'activity'
-    ? after + expectedOnAdd.bonus
+    ? after + afterBonus + expectedOnAdd.bonus
     : source.mode === 'preserve'
-      ? preserveScore + expectedOnAdd.bonus
+      ? preserveScore + afterBonus + expectedOnAdd.bonus
       : strategicAfter.value + transitionAfter.bonus + expectedOnAdd.bonus
   const scoreBefore = source.mode === 'activity'
-    ? before
+    ? before + beforeBonus
     : source.mode === 'preserve'
-      ? preserveBefore
+      ? preserveBefore + beforeBonus
       : strategicBefore.value + transitionBefore.bonus
   const scoreLabel = source.mode === 'activity'
-    ? '即时活性'
+    ? hasSettlement ? '本轮结算活性' : '即时活性'
     : source.mode === 'preserve'
       ? '阵容评分'
       : '战略评分'
@@ -735,14 +790,23 @@ function evaluateCardInternal(
     score,
     scoreDelta: score - scoreBefore,
     scoreLabel,
+    ...(hasSettlement ? { settlement: {
+      uncertain: persistentCardsIn(persistent).some(item =>
+        item.roundEndQuantityPerRaceGroup || item.roundEndEffect?.targeting?.mode === 'observedRandom' ||
+        item.onAddGroupExpectedMutation || item.onRemovalQuantityBonus) ||
+        persistentCardsIn(persistent).filter(item => item.roundEndEffect).length > 1,
+      beforeBonus, afterBonus, change: afterBonus - beforeBonus,
+      projectedActivity: after + afterBonus,
+      details: settlementDetails,
+    } } : {}),
     analysis: source.mode === 'strategic'
       ? [
           `战略评分 ${scoreBefore} → ${score}`,
           ...strategicAfter.analysis,
-          ...transitionAfter.analysis,
+          ...settlementDetails,
           ...expectedOnAdd.analysis,
         ]
-      : [],
+      : [...settlementDetails, ...expectedOnAdd.analysis],
     trace,
     warnings: uniqueWarnings,
   }
@@ -760,6 +824,7 @@ export function evaluateCard(
 interface RoundEndOutcome {
   state: GameState
   pathCount: number
+  warnings: string[]
 }
 
 function roundEndCardFor(persistent: PersistentCard): CandidateCard | undefined {
@@ -792,6 +857,7 @@ function terminalRoundEndOutcomes(
   state: GameState,
   persistent: PersistentCard,
   card: CandidateCard,
+  loadout: PersistentLoadout,
   depth = 0,
 ): RoundEndOutcome[] {
   const effect = persistent.roundEndEffect
@@ -807,23 +873,24 @@ function terminalRoundEndOutcomes(
     const result = evaluateCardInternal(
       state,
       card,
-      persistent,
+      loadout,
       { selectedMonsterIds: targetIds },
       false,
     )
     if (stateSignature(result.state) === stateSignature(state)) continue
 
     if (effect.repeatWhileEligible) {
-      const repeated = terminalRoundEndOutcomes(result.state, persistent, card, depth + 1)
+      const repeated = terminalRoundEndOutcomes(result.state, persistent, card, loadout, depth + 1)
       if (repeated.length > 0) {
         outcomes.push(...repeated.map((outcome) => ({
           state: outcome.state,
           pathCount: outcome.pathCount + 1,
+          warnings: [...result.warnings, ...outcome.warnings],
         })))
         continue
       }
     }
-    outcomes.push({ state: result.state, pathCount: 1 })
+    outcomes.push({ state: result.state, pathCount: 1, warnings: result.warnings })
   }
 
   const unique = new Map<string, RoundEndOutcome>()
@@ -840,6 +907,16 @@ function evaluateSingleRoundEndTransition(
   persistent: PersistentCard,
   loadout: PersistentLoadout,
 ): RoundEndTransitionProjection {
+  const quantityRule = persistent.roundEndQuantityPerRaceGroup
+  if (quantityRule) {
+    const groups = activeGroups(state).filter(group => group.quantity > 0)
+    const count = groups.filter(group => group.race === quantityRule.race).length
+    if (!count) return { bonus: 0, analysis: [`${persistent.name}：当前没有蛊虫，X=0，回合结束无数量收益`] }
+    const activities = groups.map(group => group.unitActivity).sort((a, b) => a - b)
+    const minimum = quantityRule.amount * count * activities.slice(0, count).reduce((sum, value) => sum + value, 0)
+    const maximum = quantityRule.amount * (count + 1) * activities.slice(-count).reduce((sum, value) => sum + value, 0)
+    return { bonus: minimum, activityBonus: minimum, analysis: [`${persistent.name}：X=${count}，回合结束活性范围 +${minimum}–+${maximum}；重复次数与随机分布待验证，按保守下界评分，不写回怪物`] }
+  }
   const effect = persistent.roundEndEffect
   if (
     !effect ||
@@ -850,7 +927,7 @@ function evaluateSingleRoundEndTransition(
 
   const card = roundEndCardFor(persistent)
   if (!card) return { bonus: 0, analysis: [] }
-  const outcomes = terminalRoundEndOutcomes(state, persistent, card)
+  const outcomes = terminalRoundEndOutcomes(state, persistent, card, loadout)
   if (outcomes.length === 0) return { bonus: 0, analysis: [] }
 
   const before = evaluateStrategicState(state, loadout)
@@ -864,7 +941,8 @@ function evaluateSingleRoundEndTransition(
       after,
       freedSlots,
       slotValue,
-      bonus: Math.max(0, rawBonus),
+      bonus: rawBonus,
+      activityBonus: totalActivity(outcome.state) - totalActivity(state),
     }
   })
   scored.sort((a, b) => a.bonus - b.bonus)
@@ -884,12 +962,18 @@ function evaluateSingleRoundEndTransition(
 
   return {
     bonus: selected.bonus,
+    // Activity modes must never count rarity/slot heuristic points as activity.
+    activityBonus: randomTarget
+      ? Math.min(...scored.map(outcome => outcome.activityBonus))
+      : Math.max(...scored.map(outcome => outcome.activityBonus)),
     analysis: [
-      `回合结束转移收益 +${selected.bonus}（${persistent.name}；${outcomeDescription}${repeatedDescription}）`,
+      `回合结束转移收益 ${selected.bonus >= 0 ? '+' : ''}${selected.bonus}（${persistent.name}；${outcomeDescription}${repeatedDescription}）`,
       `转移结构：基础状态 ${before.baseValue} → ${selected.after.baseValue}` +
         (selected.freedSlots > 0
           ? `，释放 ${selected.freedSlots} 个槽位，期权价值 +${selected.slotValue}`
           : ''),
+      ...[...new Set(outcomes.flatMap(outcome => outcome.warnings))]
+        .filter(warning => !warning.endsWith('被清空')),
     ],
   }
 }
@@ -898,12 +982,28 @@ export function evaluateRoundEndTransition(
   state: GameState,
   persistent: PersistentLoadout,
 ): RoundEndTransitionProjection {
-  const projections = persistentCardsIn(persistent)
-    .filter((card) => card.roundEndEffect)
+  const roundEndCards = persistentCardsIn(persistent)
+    .filter((card) => card.roundEndEffect || card.roundEndQuantityPerRaceGroup)
+  // This pair has a bounded, fully enumerated interaction. Other combinations
+  // keep their explicit independent-projection caveat until their order is known.
+  if (roundEndCards.length === 2 && persistentCardsIn(persistent).length === 2) {
+    const pupa = roundEndCards.find(card => card.id === 'human-pupa')
+    const scraper = roundEndCards.find(card => card.id === 'dirty-bone-scraper')
+    if (pupa && scraper) {
+      const combined = projectPupaScraper(state, pupa, scraper)
+      if (combined) return combined
+    }
+  }
+  const projections = roundEndCards
     .map((card) => evaluateSingleRoundEndTransition(state, card, persistent))
   return {
     bonus: projections.reduce((sum, projection) => sum + projection.bonus, 0),
-    analysis: projections.flatMap((projection) => projection.analysis),
+    ...(projections.some(item => item.activityBonus !== undefined)
+      ? { activityBonus: projections.reduce((sum, item) => sum + (item.activityBonus ?? 0), 0) } : {}),
+    analysis: [
+      ...projections.flatMap((projection) => projection.analysis),
+      ...(roundEndCards.length > 1 ? ['模型边界：多张回合结束常驻暂按同一选牌后局面独立投射，触发顺序及相互连锁尚未量化；以上不是完整组合期望。'] : []),
+    ],
   }
 }
 
@@ -964,23 +1064,30 @@ function evaluateObservedResolution(
     const remainingIds = state.monsters
       .filter((monster) => monster.race && !removedIds.includes(monster.id))
       .map((monster) => monster.id)
-    const triggerCard = persistentCardsIn(persistent).find(
+    const triggerCards = persistentCardsIn(persistent).filter(
       (item) => item.onRemovalQuantityBonus && conditionMatches(
         state,
         item.onRemovalQuantityBonus.condition,
       ),
     )
-    const trigger = triggerCard?.onRemovalQuantityBonus
-    const triggerCount = trigger
-      ? removed.filter((monster) => !trigger.excludedRace || monster.race !== trigger.excludedRace).length
-      : 0
-    const triggerTargets = sequencesWithReplacement(remainingIds, triggerCount)
-    for (const triggerTargetIds of triggerTargets) {
+    let triggerContexts: EvaluationContext[] = [{}]
+    for (const triggerCard of triggerCards) {
+      const trigger = triggerCard.onRemovalQuantityBonus!
+      const triggerCount = removed.filter(monster => !trigger.excludedRace || monster.race !== trigger.excludedRace).length
+      const targets = sequencesWithReplacement(remainingIds, triggerCount)
+      if (!targets.length) continue
+      triggerContexts = triggerContexts.flatMap(current => targets.map(ids => ({
+        observedPersistentTriggerTargetIdsByCardId: {
+          ...current.observedPersistentTriggerTargetIdsByCardId, [triggerCard.id]: ids,
+        },
+      })))
+    }
+    for (const triggerContext of triggerContexts) {
       outcomes.push(evaluateCard(state, card, persistent, {
         ...context,
         selectedMonsterIds: targetIds,
         observedRemovedMonsterIds: removedIds,
-        observedPersistentTriggerTargetIds: triggerTargetIds,
+        ...triggerContext,
       }))
     }
   }
@@ -1011,6 +1118,7 @@ export function rankCards(
   context: EvaluationContext = {},
 ): EvaluationResult[] {
   return cards
+    .filter((card) => canEvaluateCard(state, card))
     .map((card) => {
       const shouldProjectObservedRandom = Boolean(
         card.rankObservedRandom === 'conservative' &&
@@ -1027,13 +1135,15 @@ export function rankCards(
             }),
           ).sort((a, b) => a.score - b.score || a.delta - b.delta)
           const conservative = outcomes[0]
-          const minimumActivity = Math.min(...outcomes.map((outcome) => outcome.activityAfter))
-          const maximumActivity = Math.max(...outcomes.map((outcome) => outcome.activityAfter))
+          const minimumActivity = Math.min(...outcomes.map((outcome) => outcome.activityRange?.minimum ?? outcome.activityAfter))
+          const maximumActivity = Math.max(...outcomes.map((outcome) => outcome.activityRange?.maximum ?? outcome.activityAfter))
           const range = minimumActivity === maximumActivity
             ? `所有 ${outcomes.length} 种合法随机结果的活性均为 ${minimumActivity}`
             : `随机结果活性范围 ${minimumActivity}–${maximumActivity}`
           return {
             ...conservative,
+            raceGroupRange: raceRanges(outcomes),
+            ...(card.projection ? { activityRange: { minimum: minimumActivity, maximum: maximumActivity } } : {}),
             analysis: [
               `${range}，概率未确认，按保守下界参与推荐`,
               ...conservative.analysis,
@@ -1044,7 +1154,7 @@ export function rankCards(
 
       const shouldOptimizeTargets = Boolean(
         card.targeting?.mode === 'choose' &&
-        !card.targeting.observedRaces &&
+        (!card.targeting.observedRaces || Boolean(card.projection)) &&
         !context.selectedMonsterIds?.length,
       )
       if (!shouldOptimizeTargets || !card.targeting) {
@@ -1064,6 +1174,7 @@ export function rankCards(
         ),
       }))
       results.sort((a, b) =>
+        (state.mode === 'strategic' ? compareStartup(withStartup(state, persistent, a.result), withStartup(state, persistent, b.result)) : 0) ||
         b.result.score - a.result.score || b.result.delta - a.result.delta,
       )
       const best = results[0]
@@ -1077,5 +1188,6 @@ export function rankCards(
         ],
       }
     })
-    .sort((a, b) => b.score - a.score || b.delta - a.delta)
+    .map(result => withStartup(state, persistent, result))
+    .sort((a, b) => (state.mode === 'strategic' ? compareStartup(a, b) : 0) || b.score - a.score || b.delta - a.delta)
 }

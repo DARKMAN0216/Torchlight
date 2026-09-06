@@ -1,5 +1,211 @@
 # Codex handoff — 渴瘾决策器
 
+## 2026-09-07 人蛹零蛊虫启动策略（最新，已安装）
+
+- 00:17部署完成：用户确认已关闭后核实无客户端，203项测试和生产构建复测通过，经scripts/install-update.ps1安全更新到D:/渴瘾决策器，退出码0，安装exe长度8716800。所有旧缓存/独立文件升级前后hash一致，手动名字确认为12条。备份：C:/Users/wuyin/AppData/Local/VoraxDecisionAssistant/backups/upgrade-20260907-001713-11949e9b2b11430d9d5232eee90153f7。本轮未启动GUI/重启服务，未提交推送；请用户从原入口打开，常驻协同模式实战F8验收。下方“未安装”均是历史检查点。
+
+- 最终检查点：203项Vitest、生产构建、最终NSIS均通过；三尺寸真实控件流程和截图目视通过，git diff --check无错误。参考原图已保存design/references/round-1-pupa-no-swarm-2560x1440.png。客户端17584仍在D:/渴瘾决策器运行，未停止/覆盖；需用户关闭后用scripts/install-update.ps1安全升级，不需因本次改动重启Python服务。测试只使用临时数据，用户字典/局面未更改，未提交推送。
+
+- 用户给出 round1 总活性420：槽1/2魔法觉醒者5×24，槽3稀有觉醒者15×12，已选人蛹，候选灰质/诱变/异种。原诱变因为targeting.observedRaces被排除目标优化，空目标得到0；人蛹没有种群启动层，概率下界零吞掉路线价值；异种未量化完全排除数值比较。
+- 新engine/startup.ts：从已拥有的roundEndQuantityPerRaceGroup派生缺失种群（当前是人蛹），仅1–9回合且可靠局面、该种群为0才启动。strategic模式先比较没有已知即时/战略净损失的确定启动，再比较随机路线可保留的目标组数，最后数值评分；不改变score/scoreDelta，不把偏好当概率或期望。不预测将来发牌、不使用独立天崩表；已有蛊虫/取消人蛹/第10回合退出。其他种群/稀有度门槛常驻的统一启动规划仍未全量实现。
+- projectPotion新增randomRareMutation/randomMagicMutation：枚举所选1–2组四种群组合；已观察的具体种群优先，未观察才枚举。rankCards允许这些明确有projection的随机种群卡优化可选目标，不擅自指定随机目标。新增raceGroupRange包含各最终种群组数上下界，灰质第二次50%异魔分支也在范围内；组数不是概率。没有已建模添加变异分支时不把新增蛊虫当确定存活。
+- 本例诱变首选槽1+3（槽2+3等价），显式+52数量产生1040活性，当前已建模活性1460，战略1052（额外12为稀有度启发式，不是活性）。潜在蛊虫0–2组；灰质0–1组且可能被二次异魔变异抹掉。没有伪造种群概率、稀有度基础活性奖励或未来期望。
+- 异种仍evaluationUnavailable：卡面补randomReplacementCount=4/choose1..2元数据，纯探索层枚举移除目标、按最小即时损失优先保护高活性怪，限制六槽；本例槽1或2损失120换最多4组随机新怪。净收益/概率/其他常驻连锁未知，不加入数值排名，不自动应用，不保证出现蛊虫。满槽下低损失一组方案可能只有1个可填空槽，展示实际容量而非无条件4组。
+- StartupAdvice主界面候选前与浮窗独立显示，折叠展开详细路径；未知卡即使数值排名空仍有探索提示。RecommendationPanel标明“常驻启动优先·策略偏好”，右侧分数未篡改。活动/保阵模式仍数值排序，仅提示路线参考。启动优先时禁止纯分数驱动的自动洗牌/药箱，F8单次与真实数据存储不变。
+- React技能指导使用纯派生组件/结果而非第二份状态；前端测试技能验证1440x1050/460x844/390x844。Browser plugin not available，捆绑Playwright+Edge，Temp/vorax-startup-qa.cjs：复现420→推荐诱变/槽1、3→未知异种探索→展开风险→人蛹取消/恢复→有蛊虫隐藏/无蛊虫恢复→round10/1→activity/strategic→浮窗目标高亮→reload。无横溢出/错误层/console错误；截图Temp/vorax-startup-desktop.png及vorax-startup-390.png已目视。原生IPC替身、临时数据，不触碰用户独立文件。真实游戏后续结果仍待F8校准。
+- 基线191项全部通过；新增startup.test.tsx覆盖示例、模式隔离、确定优先、已有/末轮/不可靠/零数量、删除损失、未知新怪/槽位容量、手动目标/首领、原生未知探索UI。旧targeting测试从禁止优化随机种群改为确认可选目标与范围，不移除已有真实结果写回测试。最终测试与NSIS状态待下方补记；本轮未安装、未停止服务/客户端、未提交推送。
+
+## 2026-09-06 升级保留怪物数据（当前最新；已安装）
+
+- 23:28 用户明确同意安装后，确认无客户端进程，191项测试与生产构建复测通过，运行 scripts/install-update.ps1 安全更新到 D:/渴瘾决策器，退出码0。安装前后旧缓存及独立数据所有文件 hash 相同，手动名字仍12条；升级备份为 C:/Users/wuyin/AppData/Local/VoraxDecisionAssistant/backups/upgrade-20260906-232818-7e11b5550d5c4a2f81447b5ccd0f04ba。安装exe长度8714240，与构建exe等长、3字节差异。本轮没有启动GUI或重启识别服务，没有提交/推送。用户通过原桌面启动入口打开后，仍需验收真实IPC读取与重启保留。以下“尚未安装”均为之前检查点，由本条取代。
+
+- 最终检查点：含独立存储的 NSIS 已构建成功，191项前端测试和安全更新 CheckOnly 再次通过，git diff --check无错误。12条真实记录/局面文件与恢复副本 hash 相同。安装包已就绪但尚未安装；下一步使用下述安全更新入口安装，而不是重新开发本功能。
+
+- 用户要求安装之前先修复数据丢失。暂停安装，无客户端/服务启停，无提交/推送。此前常驻评分修改保留。检查时客户端已退出；不要据下方历史状态强杀旧 PID。
+- 旧数据仅 localStorage。原 profile `%LOCALAPPDATA%/com.darkman0216.vorax-decision-assistant/EBWebView/Default/Local Storage` 仍存在；复制后用独立临时 Edge profile 只读导出，正式 origin `http://tauri.localhost` 含 12 条自定义名字和 workspace，dev origin `http://127.0.0.1:5173` 没有字典且局面不同。origin 隔离可能导致表观丢失，未证明历次安装删数据。NSIS 旧卸载器确有删除应用数据选项，不能认定每次都发生。
+- 原缓存备份并逐文件验 SHA：`C:/Users/wuyin/AppData/Local/VoraxDecisionAssistant/backups/before-storage-fix-20260906-2245`。其中 recovered-monster-dictionary.json / recovered-workspace.json 是副本恢复数据。再次核对原缓存 hash 未变且无客户端后，复制到独立目录 `C:/Users/wuyin/AppData/Local/VoraxDecisionAssistant/user-data`；原始 WebView 未修改。12 名称含红瘟三头犬/刺蜥兽/士兵/学者，保留用户原始属性；不将这些个人记录提交仓库。
+- Rust user_data.rs 两个白名单命令 load_user_data/save_user_data：固定 LOCALAPPDATA/VoraxDecisionAssistant/user-data，JSON校验，Windows文件锁、expected 内容版本防陈旧覆盖，旧版本备份+sync_all，临时文件+MoveFileExW原子替换。数据目录与安装路径/版本/bundle-id/WebView origin 独立；失败不默认、不清理备份。
+- TS storage/userData.ts 在 App mount 前完成读取/迁移；文件优先，冲突缓存另留恢复副本；同 key 串行保存，失败队列阻断到重启。App autosave/manual save、名字典 load/add/import/delete 接入；成功写盘后才更新字典 UI。损坏文件显示保护页，不挂载 App 写默认值；浏览器预览仍 localStorage。React 技能用于启动时序和避免双份状态误报保存成功。
+- scripts/install-update.ps1：先确认全部客户端关闭，备份旧 Local Storage 及独立文件并校验 hash，NSIS /S /UPDATE 原目录更新，之后验证所有用户数据 hash 未变。CheckOnly 已通过；实际安装未执行。不要再直接用旧 /S 安装流程。服务不需因本次存储更新重启。
+- 验证：191 项 Vitest（新增 8 项存储），3 项 Rust release 文件测试，生产构建通过。Playwright+Edge（Browser plugin not available）1440x1000/390x844，模拟 native IPC+临时浏览器存储验证迁移→保存→清空测试缓存→reload恢复→冲突不更新→损坏文件暂停且零写入；无控制台/框架错误，无横溢出，截图已目视。Temp/vorax-storage-qa.cjs、vorax-storage-desktop/390/protection.png。原生文件原子替换由 Rust 测试覆盖；真实安装后 WebView 到原生命令端到端仍待验收。
+- 后续：确认后用安全更新入口安装；用户启动后检查“怪物名字典：手动记录12条”、独立目录显示，增删记录重启验证。不要在测试中改写真实 user-data 文件。
+
+## 2026-09-06 常驻参与本轮评分（最新）
+
+- 最终检查点：摘要文字对比度已修正，三尺寸Playwright流程重新全部通过且截图已目视；183项测试/生产/最终NSIS构建通过，git diff --check通过。安装包为src-tauri/target/release/bundle/nsis/渴瘾决策器_0.1.0_x64-setup.exe；尚未安装，请用户关闭所有客户端实例后原目录安装，识别服务无需关闭。用户存档/名字典未改。React技能让收益摘要直接读取引擎输出、勾选变化实时派生，无第二份缓存。
+- 用户要求处理常驻模型。默认activity及preserve原来遗漏回合结束收益，现统一计入：比较药剂后结算投射与保留当前局面的结算投射之差；activity仅计真实活性，不掺稀有度/槽位启发式。原state/activityAfter仍只含药剂即时及已记录触发，不应用随机/回合结束投射。模式名称改“本轮活性（含常驻）”。
+- EvaluationResult.settlement提供beforeBonus/afterBonus/change/projectedActivity/details/uncertain；完整候选、推荐与浮窗共用SettlementSummary纯派生展示。显示即时变化与常驻结算增减、可展开依据。存在未知常驻分支/顺序则保留参考排名、禁自动药箱/洗牌并跳过隐藏的全牌池估算。天崩提醒仍完全独立，不受本轮模型改动影响。
+- 人蛹本身仍按X..X+1轮保守范围，不猜重复定义/随机均匀。新pupaScraper.ts对仅人蛹标本+脏污刮骨刀的双常驻组合枚举每组命中次数分配和两种顺序，重算275门槛与活性×数量交叉项；不确定顺序取下界，不把模拟局面写回。其他多常驻组合仍独立投射，界面明确警告，不能声称全量连锁已实现。
+- 常驻选择rankPersistentChoices改用round+1投射周期，nextRoundEndBonus是相对已有常驻的增量，重复选择已有ID不二次加分。回合结束普通模型执行时传完整loadout，使融合的已支持移除触发参与；移除自动分支从find第一张改为枚举各触发卡ID的目标组合。移除跨越条件门槛时保守省略并提示，触发采样时点仍待实测。负转移不再截断为零，quantity=0不计有效组。
+- 基线170项全部通过后实现；新增13项回归，目前183项Vitest/生产构建通过。覆盖三模式人蛹增殖+24、即时+100但丢失人蛹800使评分-700、门槛消失、零数量、周期、重复卡、负转移、融合+指爪、指爪+跖骨双触发、门槛跨越保守、双常驻顺序/乘积。UI捆绑Playwright+Edge（Browser plugin not available），1440x1000/460x844/390x844；真实控件勾选人蛹→推荐蛊虫转化+24→取消清除→重勾恢复→浮窗展开X=2→reload保留，原生API替身、临时浏览器存储，不触碰用户数据。截图Temp/vorax-persistent-desktop.png及vorax-persistent-390.png；截图发现浅色候选继承深色文字后已明确设置摘要前景色，需最终复核构建。
+- 本轮不修改识别服务、不停止进程、不提交/推送。检查有客户端14000（路径不可读）和25924（D:/渴瘾决策器），未强杀；新版打包后需用户关闭所有客户端再原目录安装。单次F8/存档/名字典保持。
+- 后续仍需：全量多常驻事件链/结算顺序；兽筋绞肉索等仅战略规则卡的真实结算；新增概率变异后种群变化与后续门槛的完整分支；手动回合结算UI仍主要处理第一张roundEndEffect，人蛹仍预览，实际结果靠F8同步。不要把此次“已支持常驻本轮参与评分”说成全部用具已精确量化。
+
+## 2026-09-06 天崩开局独立种群关联表（最新）
+
+- 部署完成：用户回复已关闭后确认客户端进程已退出，NSIS /S 安装到 D:/渴瘾决策器，退出码0，安装exe长度8661504。未改字典/存档，未提交/推送。检查时28765没有监听，识别服务未运行；本轮不启动或停止服务，请用户从桌面快捷启动入口打开客户端和服务。下方“尚未安装”是此前构建检查点，已由本条取代。
+- 用户明确要求脱离模型，仅判断种族/卡牌关联。新增src/data/openingCardRaces.ts覆盖底表24张手术用具，[]表示通用、缺失表示未知。依据卡面种群关联，包括产出种群、挛缩指爪的骨卫兵路线；不是触发条件或禁用判断。精确卡名及显式旧别名匹配，不依赖structured persistentCards、战略规则、排名或效果字段。
+- openingRouteMismatch现在接受仅含name/confidence的候选；第一回合、三张可信卡名、可靠非空怪物且全部关联种群无交集才提醒。保留怪物待核对防误报；不比较稀有度、数量门槛，仅用quantity>0排除空槽残值。
+- 独立OpeningWarning组件直接放App完整界面center-column及浮窗推荐之前，PersistentRecommendation不再负责提醒/传入state。即使模型未入库或ranking为空仍能显示；卡名未知/通用则不武断宣布全部不匹配。React技能推动按当前props派生提醒，无额外缓存状态。新增24卡覆盖及模型字段缺失/评分模式不影响的测试。
+- 170项Vitest、生产构建通过；Browser plugin not available，捆绑Playwright+Edge，5174端口1440x1000/460x844/390x844验证全觉醒者+孽生肉芽/人蛹标本/挛缩指爪显示红字→未建模孵化囊也提醒→补匹配蛊虫清除→第二回合隐藏。原生与OCR为替身，非物理游戏输入。Temp/vorax-opening-qa.cjs及vorax-opening-desktop/460/390.png，截图已目视，文字可读无横溢出/错误层/控制台错误。
+- 最终NSIS安装包已构建成功（包含浮窗紧凑字号），尚未安装。当前客户端9592路径不可读（管理员），已请用户关闭客户端后更新；识别服务无修改，无需重启。不强杀不明进程，未清字典/存档，未提交/推送。关闭客户端后安装src-tauri/target/release/bundle/nsis/渴瘾决策器_0.1.0_x64-setup.exe到D:/渴瘾决策器，再请用户打开原快捷方式实测。
+
+## 2026-09-06 启动入口改为用户提供的校验重启逻辑
+
+- start-installed.ps1不再复用健康服务：调用recognizer-process.ps1核实所有28765监听进程均为python.exe、命令行包含当前项目完整server.py路径、父进程ExecutablePath准确匹配项目虚拟环境Python，再逐个复查PID/CreationDate/父PID后Stop-Process -Force。任何身份不明先拒绝。仅结束已校验服务进程，不强杀父进程/其他窗口。
+- 等端口释放后，隐藏PowerShell通过-ExecutionPolicy Bypass -File scripts/start-recognition.ps1启动服务；保留健康等待、独立日志、客户端去重及UAC入口。这是用户明确请求的重启流程，管理员入口现在可重启已验证的旧普通服务；客户端已有实例不重启。服务重启会失去未完成的点击上下文，存档/字典不清除。
+- 167项前端/生产构建通过；8个进程验证替身测试和3个启动替身测试通过。真实CheckOnly因13708及父3524路径/命令行不可读安全拒绝；没有结束实际服务，没有执行GUI/UAC。请用户双击管理员入口验收，不绕过执行策略。
+
+## 2026-09-06 桌面快捷启动入口
+
+- 用户要求双击启动。新增start-installed.cmd + scripts/start-installed.ps1，桌面两个cmd指向当前项目。普通入口健康复用/无服务时隐藏启动Python，最长40秒等待后开已安装GUI；互斥锁防双击并发，已有客户端不重复打开。端口异常/旧runtime/缺文件明确报错，不停任何进程、不修改字典存档。
+- 管理员入口传AsAdmin并经UAC；不自动提升已存在普通服务，需用户先关闭旧服务。后台日志LOCALAPPDATA/VoraxDecisionAssistant/logs；项目移动要更新桌面入口绝对路径，客户端路径可传ClientPath。
+- Windows PowerShell 5.1 CheckOnly真实环境通过；test-installed-launcher.ps1以替身验证Ready/Cold/ClientRunning，不启动真实GUI/Python/UAC。本轮未调用启动GUI以绕过先前执行策略拒绝，桌面双击与UAC待用户验收。
+
+## 2026-09-06 抬牌遮挡阶段修复（最新）
+
+- 20:56用户确认关闭旧服务后完成部署：确认28765空闲，167项测试/生产构建再次通过；核实33856路径后停止旧客户端，NSIS /S 原目录安装exit0。新服务启动进程24152，health runtime=phase-fallback-v1、F8注册/polling=true、choices.hookActive=true。后台日志Temp/vorax-phase-20260906-205646.log及-error.log；未改用户存档/名字典。安装exe与构建exe仅3字节差异（打包类别标记）。自动打开GUI客户端的命令被执行策略拒绝，未绕过；需要用户从原快捷方式手动打开新版客户端，再在游戏中F8实测。下方“暂待关闭/未安装”是此前检查点，已被本条取代。
+
+- 用户截图90cca0c9：第一轮408活性，候选斑斓肝脏/肿大脑垂体/人蛹标本；原fast OCR未读卡底类别、抬起中卡挡住标题，phase unknown阻断常驻映射与点击上下文。
+- 新recognizer/phase_detection.py从本地完整卡牌目录读取类别（不是效果模型），快速OCR新增底部标签带。只接受限定标题/底部区域的精确标签；标签与已知名称冲突unknown；无标签时要求3/5张全部高可信完整名称且同类别。不靠第一回合猜常驻。runtime=2026-09-06-phase-fallback-v1。
+- 添加mottled-liver与human-pupa。肝脏触发支持任意种群实际变异，阈值前后均满足才计；跨两异魔门槛与新增概率变异连锁的采样时点未确认，暂不计该条件收益并说明。人蛹标本按X组蛊虫、每轮随机X组+8数量给X至X+1轮极值范围，仅预览保守下界；不会伪造随机结果写回。并非常驻全量机制完成。
+- UI展示模型边界/战略评分不是期望；常驻阶段隐藏药剂洗牌建议。截图中脑垂体不生效，因为首领是异魔、觉醒者是普通；肝脏+24是已有1组异魔的路线权重，不是实际增益。
+- 新8号截图design/references/round-1-raised-permanent-choice-2560x1440.png；8图OCR通过（新图phase confidence=.9995且ChoiceTracker已arm）。75项Python通过，新增阶段冲突/未知/低置信度/抬牌/类别兜底用例。前端新增阈值/同种群不触发、人蛹范围不变更源状态、首领种群条件和新卡记录测试。
+- Browser plugin not available；React及前端测试技能促成评分边界展示、常驻阶段隐藏无关洗牌，使用捆绑Playwright+Edge替代。Temp/vorax-phase-qa.cjs运行真实截图OCR再送入UI，1440/460/390验证3张结构化候选、推荐肝脏、怪物数值408无待核对、无横溢出/错误。原生与HTTP传输替身，不是实战物理点击。
+- 最终167项Vitest、75项Python、8图OCR、三尺寸UI及生产/NSIS构建通过，git diff --check无错误。安装包已更新，但未安装/重启：28765端口属于32608，health仍为choice-tracking-v1，python进程18676/32608路径不可读，未强杀。客户端33856为D:/渴瘾决策器，仍旧版。已请用户关闭管理员服务窗口，收到确认后核对进程与端口，安装新包并启动phase-fallback-v1服务。未提交/推送，不删除用户数据。
+
+## 2026-09-06 选牌点击记录（最新，保留单次识别）
+
+- 用户同意被动点击方案，并询问常驻协同。现有App persistentLoadout传入rankCards/evaluateCard；添加/移除/变异常驻联动已参与，战略模式还含回合结束投射与门槛权重。不是预测未知后续发牌，仍有15张药剂未完成模型，未在本轮扩展或宣称全量完成。
+- recognizer/choice_tracking.py独立状态机和WH_MOUSE_LL线程：仅当前游戏前台/WindowFromPoint根窗口一致/物理左键抬起；不缓存其他应用坐标、鼠标移动、文字，不注入/拦截。回调外验证进程/客户区。OCR标题sourceRegion改为各自实际框，3/5牌窄内部区域按标题中心推导；确认/洗牌按钮使用参考16:9固定窄区域。窗口绑定改变、比例异常、低可信/重复坐标不猜选。
+- 每次F8只跟踪当前一手：暂选可替换，确认点击后冻结；下次F8相邻回合/同回合可靠牌面或阶段变化后transition-observed，常驻要求离开用具阶段。不是游戏内部回执，不靠总活性反推选择。刷新清除上下文；药箱同回合3→5可记入但新牌仍需F8。目标仅记录确认前点击/切换槽，不当作实际随机结果。键盘确认、多阶段目标界面、重启前的未完成选择均人工核对。
+- ChoiceJournal展示暂停/开启、暂选与最近8条；最多100条choiceLog添加到原v4 workspace（兼容旧档），与persistentIds同时保存。精确名称/明确别名常驻校验后自动追加；药剂只记录，不重复模拟结算。uncertain可人工确认；标记误记不会自动删除可能来自其他操作的常驻，需左侧取消勾选。原手动按钮保留，手动常驻/新局重置服务监听，不清历史/字典。
+- F8仍单次，follow worker停用，未增加任何定期截图。点击上下文120秒到期、客户端轮询租约15秒，reset generation防迟到OCR重新启用旧监听。服务版本choice-tracking-v1。
+- 验证：163项Vitest，Python全套最终结果见QA；7图OCR回归、生产/NSIS通过。曾在游戏关闭后发现3个旧运行时测试未隔离新增find_window调用，已补mock，不能依赖本机游戏存在。新增鼠标回调测试证明注入事件/他窗/浮窗覆盖/移动不记、始终CallNextHookEx。
+- Browser plugin not available；按React/前端测试技能用捆绑Playwright+Edge验证1440/460/390：暂选不追加→确认不追加→换面追加一次→不确定人工确认→暂停/开启→reload保留日志常驻；无自动OCR/错误层/console错误/横溢出。Temp/vorax-choice-qa.cjs，截图vorax-choice-desktop.png、vorax-choice-mobile.png；模拟原生与识别响应，不是游戏点击实测。React技能使记录/常驻同存并按事件ID去重。
+- 部署20:10：核实路径后结束客户端29280、服务8756（父32928），NSIS原目录安装exit0，新客户端33856、服务启动进程20316。health runtime=choice-tracking-v1，F8注册/polling、choices.hookActive均true。日志Temp/vorax-choice-20260906-201038.log及-error.log。保留用户存档/字典，未提交/推送。实际游戏点牌+确认+F8需要用户验收；当前完成不等于已验证游戏特定输入兼容性。
+
+## 2026-09-06 19:44 按用户要求恢复单次识别（覆盖下方跟随状态）
+
+- F8Dispatcher改回store.trigger：按一下识别一次，保留hook/poll/WM_HOTKEY去重与识别忙时拒绝重复请求。启动不再创建follow worker，POST /follow/start返回409；旧pause路由保留兼容。follow.py和测试保留为停用实验代码，不会自动采集。服务版本2026-09-06-single-shot-v1。
+- 客户端完整/浮窗删除跟随开启入口和跟随提示，统一“识别屏幕（F8）/识别一次 / F8”，说明游戏选牌后再按F8；名称权威、蝎兽补识别、浮窗/目标仍保留。未回滚用户其他功能/字典。
+- 选择记录核对：choosePersistentOffer或左侧常驻勾选更新persistentIds，localStorage workspace及导出局面包含常驻组合；游戏点击本身不监听，不能自动记录实际牌与目标。普通药剂在软件内应用会改局面和会话撤销历史，但history未写入SavedWorkspace，没有完整持久化对局操作日志。单次模式请在下一次截图前记录本次常驻候选选择。
+- 验证157项Vitest、57项Python及生产/NSIS通过。Browser plugin not available，捆绑Playwright+Edge在1440/460/390验证每点击一次只触发一次，8.5秒空闲无重复请求且无follow/start；浮窗已选肿大脑垂体写入测试浏览器workspace，下一次药剂OCR和reload均保留。页面/错误层/控制台/无横溢出通过。模拟OCR/窗口API，不是实机F8；临时测试存储未触碰安装版用户数据。
+- 已核实客户端PID8988路径后退出、原目录静默安装exit0，新PID29280。用户确认管理员服务关闭，检查端口释放后后台启动新服务PID32928；health=single-shot-v1、hotkeyRegistered/hookActive=true、sequence0。日志Temp/vorax-single-20260906-194431.log及-error.log。未清字典/存档，未提交/推送。实际游戏F8仍待用户验收。
+- QA临时脚本Temp/vorax-single-shot-qa.cjs、截图vorax-single-shot-mobile.png。React技能保留原版本化存储机制，未添加第二份选择缓存。
+
+## 2026-09-06 19:25 持续跟随重复识别修复
+
+- stable_snapshot_key 对可信名称≥0.85采用名称身份，不把图标/颜色时有时无作为局面变化；保留占用、名字、数量、单体活性、回合、阶段、候选和洗牌次数，并排序/包含槽位ID。无可信名称仍比较视觉属性。确认发布时仅保留两次观测相符的视觉属性，避免未知名字被单次错误颜色/图标自动认定；已录入名字由前端字典补全。
+- 新 checking 状态仅用于有已确认局面且视觉未变的8秒后台复查；前端派生 followNeedsSynchronization 在 checking 时保留推荐，真实变帧/语义变化/不完整/切出/断联仍隐藏旧推荐。OCR检出换牌即使视觉未检出，也清除 confirmed_visual、重新两次确认，不走旧的8秒快速返回。暂停/重启generation仍丢弃迟到结果。
+- snapshot_issue 返回具体槽位/字段、候选、阶段、HUD矛盾原因；连续失败指数退避1/2/4/8秒封顶，轮询payload提供retryCount/retryAfterMs/lastReason/ocrCount。重试窗口内不重复OCR，成功/新启动清计数；前台不可用时也不重复高速抓取。名称/数字视觉检测带收窄，排除上方种群图标；没有全局放松1.2%变帧门槛。
+- 157项Vitest、57项Python、7图OCR及生产/NSIS构建通过。新增11项Python覆盖名字稳定视觉抖动、低可信名字、后台复查/换牌/失焦/变帧、失败退避恢复/暂停、具体错误、图标带排除；前端验证checking保留与其他状态隐藏。Browser plugin not available，捆绑Playwright+Edge验证1440/460/390：启动→后台复查保留推荐与槽3目标→换牌重试收起→删怪/五牌→失焦→暂停拒绝迟到结果；无空白/框架层/控制台错误/横溢出。
+- QA临时脚本Temp/vorax-follow-stability-qa.cjs；截图vorax-stability-checking.png、vorax-stability-retry-mobile.png。测试用模拟快照与窗口API，不是物理F8实战。React技能让显示状态纯派生，不缓存旧推荐。
+- 已核实旧客户端PID23020路径并退出，原目录静默安装exit0，新客户端PID8988，未清字典或存档。旧服务端口已释放，后台启动服务PID34416，health=2026-09-06-follow-stability-v1、F8注册和hook正常、默认paused。日志Temp/vorax-stability-20260906-192506.log及-error.log。用户需F8开启新版实测，未自动开启截图、未提升权限。未提交/推送。
+
+## 2026-09-06 名称字典为权威 / 三号罐短名称补识别
+
+- 用户明确要求已录入名字直接决定种群和稀有度。resolveMonsterName 对可信度≥0.85的完整名字采用字典属性，不再被高可信图标/颜色冲突否决；手动同名覆盖优先于内置记录。未知/低可信名称保留视觉兜底，不做错字/子串猜配，不把未读出的名字沿用为本次结果。完整可靠新快照会清除旧待核对提示。更新字典弹窗说明，无新增存储，原手动记录保留。
+- 用户第5回合三号罐原图复现：数值141×78读对，蝎兽名称漏检且图标未通过，导致种群/稀有度缺失。增加 retry_monster_name：仅有数字乘积证据且名字缺失/低可信的槽位，裁固定名称窄带3倍放大重试；只有单个完整中文名且≥0.85接受，坐标映回原图，不重扫全屏、不强行填入蝎兽。真实原图读出蝎兽约0.9986，名称可匹配普通异魔。
+- 新回归样本 design/references/round-5-short-name-retry-2560x1440.png；156项Vitest、46项Python、7图OCR、生产和NSIS构建通过。Browser plugin not available，沿用捆绑Playwright+Edge验证1440/460/390：模拟高可信颜色/图标冲突，内置蝎兽与自定义测试异兽均正确回填普通异魔且无待核对；弹窗文案、无空白/框架层/控制台错误/横溢出通过。测试字典仅写临时浏览器，不写用户安装版。
+- 部署：核实原客户端PID25188路径后结束并原目录静默安装（exit0），新客户端PID23020，D:/渴瘾决策器 exe时间19:00:40，未清存档/字典。旧管理员服务端口随后已释放，启动普通权限独立隐藏服务PID30940，日志Temp/vorax-name-first-20260906-1903.log及-error.log。health=2026-09-06-name-first-v1；重启默认暂停，用户需F8开启。实际新一轮游戏连续OCR尚待验证，未自行提升权限。
+- QA脚本Temp/vorax-name-first-qa.cjs；截图vorax-name-first-float.png、vorax-name-first-mobile.png。React技能保持属性在识别合并层派生，不额外缓存种群稀有度。未提交/推送。
+
+## 2026-09-06 18:40 continuous-v2 已后台启动
+
+- 用户关闭旧服务后确认 28765 无监听，启动项目 Python（启动 PID30992），使用独立隐藏进程并将 stdout/stderr 重定向至 Temp 日志。health 已确认 continuous-v2、hotkeyRegistered=true；hotkey-recognition 确认 hookActive=true、默认 paused、sequence=0。客户端 PID25188 保持运行，无需重装。此条解除下方服务待重启阻塞，真实游戏持续更新仍待用户按 F8 验证。
+- 日志：C:/Users/wuyin/AppData/Local/Temp/vorax-follow-v2-20260906-184041.log，以及同名前缀 -error.log。
+- 用户反馈手动启动且保留命令窗口才好使。检查 scripts/start-recognition.ps1 直接前台运行 Python，没有后台脱离；关闭该控制台会结束服务，因此前台脚本需要保留窗口，不意味着识别依赖窗口可见。本次后台服务 health 正常，不需额外手动重复启动。游戏进程路径不可读，管理员权限差异仍可能影响游戏前台 F8；本轮未提升权限，不能声称实际按键已验证。
+
+## 2026-09-06 18:25 截图排除等待误判已修复，服务待重启
+
+- 实机事件已确认游戏前台 F8 能通过 hook 开启/暂停。主客户端窗口 GetWindowDisplayAffinity=17，截图排除已生效；另一个同进程的 16×16 `Tao Thread Event Target` 内部事件窗口 affinity=0，被错误计入浮窗校验，是持续等待的原因。
+- server.py 在确认窗口属于决策器后，仅跳过精确类名 `Tao Thread Event Target`；真实浮窗仍必须 affinity=17，类名读取失败不豁免。单次截图避让也不再隐藏内部事件窗口。不需要重新打包客户端。
+- 源码 runtimeVersion 更新为 2026-09-06-continuous-v2；44 项 Python 测试通过（新增内部窗口/真实未保护浮窗/未知类名回归），前端基线 155 项及生产构建通过，前端本次未改。
+- 部署仍待完成：28765 当前监听 PID21132（父进程10416），路径/命令行不可读，疑似用户重新管理员启动的服务。未强行终止、未提升权限。请用户关闭当前识别服务后检查端口释放，再后台启动项目 .venv-recognition/Scripts/python.exe recognizer/server.py；核对 health=continuous-v2、F8 注册，再由用户 F8 开启实测。实际持续 OCR 更新尚未验收。未提交/推送。
+
+## 2026-09-06 18:11 新版跟随服务已部署
+
+- 用户确认已关闭旧管理员服务；检查28765无监听后，在普通权限下后台启动新版Python（启动PID14932），并重开安装客户端PID5032。
+- /health已确认runtimeVersion=2026-09-06-continuous-v1；hotkeyRegistered=true、hookActive=true。跟随默认enabled=false/status=paused、sequence=0，等待用户在游戏前台按F8开启。此条解除下方“旧服务未重启”的部署阻塞，但不代表真实游戏F8/截图排除已验收。
+- 日志：C:/Users/wuyin/AppData/Local/Temp/vorax-follow-20260906-181135.log及同名前缀-error.log。未自行提升权限；若游戏高权限导致输入问题，再根据实际事件排查。下一步用户开启后检查自动更新、切出等待、再次F8暂停。
+
+
+## 2026-09-06 持续跟随模式（最新）
+
+- F8Dispatcher三个输入通道改为FollowController的开启/暂停，不再单次截图。HTTP新增幂等POST /follow/start、/follow/pause；/hotkey-recognition携带follow状态/generation，读取时续客户端15秒租约；/trigger-capture跟随中请求重新确认，暂停时仍单次截图。默认不采集，服务不持久化跟随开关。
+- recognizer/follow.py：350ms采样关键文本区域边缘，变化后至少650ms视觉稳定；两次OCR的回合/六槽/候选/总活性/洗牌次数语义一致才发布。严格六槽、候选3或5张、正数值与HUD总和校验；实际种群/稀有度是否可接受仍由前端名字典与merge检查。8秒周期复查微小变化，重复状态不发布；未完整/非决策画面自动等待，非游戏前台不截取。
+- 暂停/重启递增generation，丢弃进行中的识别；手动OCR跨generation亦丢弃。客户端防止按钮切换前在途轮询响应回填，语义去重避免刷满历史。跟随中等待/识别/离开游戏均隐藏旧推荐与目标，界面不允许重复应用药剂；导入图片先暂停跟随。
+- 无闪烁路径只MSS抓游戏前台客户区，不隐藏/激活窗口；客户端开启时setContentProtected(true)，暂停false，native调用串行。使用本地Tauri/tao的WDA_EXCLUDEFROMCAPTURE；服务核验所有可见决策器窗口affinity=0x11和Windows build>=19041，失败等待，不静默抓浮窗。系统/驱动/游戏中的实际截图排除仍未实机验收，不能把单元测试替身当成功。单次模式保留旧避让路径。
+- OCR新增骰子次数区域，仅可靠0–3写回；不根据同回合换牌猜测扣次数，药箱/洗牌均直接跟随新候选3/5。六张旧图回归和完整性门槛全部通过。回合数下降时清旧常驻/洗牌历史是新局启发式，同回合重开未自动辨认。
+- 常驻识别边界：当前只能识别候选，不能识别已选图标。跟随中候选消失后保留用具列表，浮窗“已选”记录实际选择；不自动选择推荐牌。中途接入已有常驻需人工核对；不宣称完全无人工选择跟踪。
+- 验证：155项Vitest，41项Python unittest，6张OCR回归与跟随质量门槛，TypeScript/Vite/NSIS均通过。Playwright+Edge验证完整/浮窗/390px启动→自动回填→动画隐藏旧推荐→删怪/5候选→前台等待→常驻确认→暂停丢弃旧结果→恢复，详情QA。
+- 部署阻塞：旧Python监听PID20468端口28765，CIM/Process路径和命令行不可读，疑似管理员服务，未强行结束。已请用户关闭管理员服务窗口，等待重启新版runtimeVersion=2026-09-06-continuous-v1；未另开重复服务、未自行提升权限。当前安装状态见本节后续更新。未提交/推送。
+- 最终安装：已核实旧客户端PID24344路径后退出，NSIS静默安装退出码0；D:\渴瘾决策器\vorax-decision-assistant.exe为8659456字节（18:02:26），新PID16492已启动，存档/字典保留。最终/health仍为empty-slot-v1、PID20468，故持续跟随尚未在运行服务生效。用户关闭旧服务后，从本项目运行scripts/start-recognition.ps1；管理员游戏需用户按原方式在管理员终端启动。代码/客户端已完成，服务重启与真实游戏F8验证待办，不要宣称全链路部署完成。
+
+
+## 2026-09-06 药剂覆盖审计与分支预览（最新，覆盖下方旧状态）
+
+- 用户要求处理全部未量化药剂。已将底表60张非用具全部接入名称映射，但不是全部完成数值模型：21既有、2部分、21范围、1需参数、15未完成。准确名单、已知未实现流程与缺失证据分别见CARD_COVERAGE.md，不要把未完成都写成缺卡面资料。
+- 新增potionProjection纯函数分支预览、withTargets/右邻移除、新怪显式base参数；清疽/纯粹/鲜脊等已显示范围，随机落点不假设等概率。鲜脊范围含0至3命中及分步/批量外包分配，非精确期望。枚举已支持移除常驻；修正onAdd变异仅改runtime副本而未回写实际新怪的问题。
+- canEvaluateCard统一参数门槛；育卵激素仅在用户确认newbornSwarm后计算。没有用户确认默认36×1，测试数字只是夹具。设置随存档保存，可清除；未扩散到其他新增怪物牌。
+- 范围模型requiresScreenSync：卡片与推荐按钮禁用，App入口双重保护，游戏选牌后F8同步真实结果。候选含范围/未量化则暂停自动洗牌判断；特殊牌不进入普通重抽池，已接入的8张只算即时部分。卡库新增覆盖标识与缺口筛选。
+- 151项Vitest通过，TypeScript/Vite与NSIS构建通过；捆绑Playwright+Edge在1440/460/390宽度验证识别契约、浮窗、参数持久化/清除和缺口筛选通过。不是物理F8或实际OCR验收，Python本轮未改/未重启。具体见QA。
+- 安装版D:\渴瘾决策器已更新并重开：先核实PID5332路径再关闭，静默安装退出码0，exe8655360字节。保留存档/字典，没有重启用户的管理员识别服务。未提交/推送，远程同步点仍7900b65。旧条目“天崩安装待更新”已被本次覆盖安装替代。
+
+
+## 2026-09-06 天崩开局红字提醒（最新）
+
+- 用户参考四组普通蛊虫 + 肿大脑垂体/孽生肉芽/挛缩指爪，要求第一回合用具与怪物完全不匹配提醒。实现为明确标注的“种群路线”启发式，不是效果合法性检查：挛缩指爪的现有战略路线为骨卫兵，但移除蛊虫仍能触发，不能写成三张全部无效。
+- openingRouteMismatch读取三张用具strategicProfile的raceAnchor/groupThreshold种群，与数量>0的现有怪物求交集；三张必须全部有明确种群路线。只在round=1、无recognitionReview且有怪物时提示；任一种群相交、未知/通用路线、候选不足3张均不提示。仅稀有度或数量门槛不足不等于完全种群不匹配，不触发该警告。
+- PersistentRecommendation在完整界面和浮窗共用红字警告，角色alert，说明仍可选择、后续补怪/变异可改善。按React技能直接从当前state/候选派生，不持久化警告、不新增确认按钮，不改游戏引擎分数、洗牌逻辑和F8服务。
+- 136项Vitest、TypeScript/Vite/NSIS构建通过；模拟识别契约在1440/460/390宽度测试显示、匹配种群/第二回合自动消失、未知牌抑制、选择按钮仍可用，通过；详见QA。
+- 安装包已生成，但未覆盖安装版：当前客户端PID20064无法读取路径，疑似用户管理员启动，未尝试强关。需要用户退出后运行src-tauri/target/release/bundle/nsis/渴瘾决策器_0.1.0_x64-setup.exe。本轮未重启Python服务，保留用户的管理员测试环境；未提交/推送。
+
+## 2026-09-06 三张未匹配药剂处理（最新）
+
+- 三张名称已进入candidateCards并可由识别契约匹配。石化脊髓溶液：选中+20单体活性，非异魔才变异并额外+30，稀有度不变；新增convertRace.onlyIfDifferent，实际种群变化时派发孽生肉芽的全体+35。已有异魔不触发额外变异收益。
+- 活性育卵激素、鲜脊髓药粉保留原文，evaluationUnavailable=true，effects为空且明确未量化。前者新怪数量/单体活性/稀有度无证据，不套旧12×15假定；后者两阶段随机尚未建模，少于3组异魔及重复命中的语义待证实。已向用户请求使用前后截图。
+- rankCards和可计算重抽池排除未量化牌，evaluateCard直接拒绝；应用按钮禁用防止写回假状态。当前候选有未知收益时不自动建议洗牌或药箱，仍可手动洗牌；推荐及浮窗明确只比较可计算部分。React技能使覆盖状态从当前候选派生，避免识别更新后遗留旧警告。
+- 130项Vitest、生产与NSIS构建通过；捆绑Playwright+Edge桌面/浮窗/390px渲染与交互通过，详情见QA最新节。安装版D:\渴瘾决策器已更新并启动，退出码0、8650752字节，保留存档与字典。Python无改动未重启，仍为2026-09-06-empty-slot-v1。
+- 本轮及前序工作均保留在工作区，未自动提交/推送；远程同步点仍7900b65。后续先补两张随机药剂的实战参数，不把“已收录”误写成“完整可计算”。本轮前端验证使用契约和窗口测试替身，不代表物理F8验收。
+
+## 2026-09-06 删怪后空槽自动同步
+
+- 修正已识别空槽必须等待全场总活性校验的过度确认：完整六槽、可信游戏阶段且仍有可靠非空槽时，occupied=false 且置信度≥0.85、无矛盾名字/种群/正数值的槽可独立清零；已有空槽不重复要求全场校验。清零包括种群、稀有度、数量、单体活性，记为实际变更，下一次完整可靠识别自动清除旧 review。
+- 安全边界保留：可信总活性矛盾仍拒绝怪物更新；缺槽/低置信度不能当空槽；全场空白且没有总活性时不清空原阵容（总活性可靠为0则允许全空）。低可信HUD值不再用于硬性否决。非空槽缺失/低可信数量或单体活性只核对该槽，避免借用旧数值后错误推荐。
+- Python把未知但可读的完整名字也作为存在怪物的证据，不因名字未入库且图标失败而标为空槽。服务已重启为2026-09-06-empty-slot-v1，日志 recognition-empty-slot.log / recognition-empty-slot-error.log。
+- 验证：124项Vitest、25项Python、6张OCR原图、TypeScript/Vite/NSIS构建通过。安装版原目录 D:\渴瘾决策器 已覆盖更新并重开，安装退出码0，未清除存档/名字典。此次未提交/推送。
+- 前端测试技能要求的实际渲染验证使用捆绑Playwright+Edge（Browser plugin not available，无新增依赖），URL http://127.0.0.1:5174/，1440×1000、460×680、390×844。真实OCR回合4两组→回合10一组（去除新响应HUD总活性以复现漏读）→自动清空旧槽→重复上传→浮窗五空槽且无核对→刷新仍保持，全部通过；不是新采集的连续删怪实战。页面身份/非空/无框架错误/控制台/无横向溢出通过。钩子事件隔离为idle，窗口API测试替身，不宣称实机F8验收。
+- 证据在 %TEMP%/vorax-empty-slot-qa.cjs、vorax-empty-slot-float.png、vorax-empty-slot-mobile.png。真实游戏动画/遮挡导致的低可信结果仍可能要求重拍，不通过自动点击“已核对”绕过不确定性。
+
+
+## 2026-09-06 浮窗怪物/具体目标与 F8 兼容监听
+
+- 浮窗默认 460×680（逻辑尺寸），展示从左到右六槽：种群、白蓝黄红稀有度、单体活性×数量、组总活性。仅当前识别对应的怪物数组展示 OCR 名字；人工修改/结算后不沿用旧名字。名字典功能保留。
+- 推荐卡展示效果、评分、结算后总活性与警告；引擎 recommendedTargetIds 关联当前槽位/种群/稀有度，高亮明确可选目标。随机命中不高亮、不假装可指定；未知目标要求展开。待核对、待结算、手术用具/手术方案不会泄漏旧药剂目标。
+- Python 增加 WH_KEYBOARD_LL F8 备用边沿监听，与 RegisterHotKey / 10ms 轮询共用 F8Dispatcher 去重。回调仅缓存 F8（忽略其他按键、修饰组合和注入事件），始终 CallNextHookEx，不拦截输入、不注入游戏。进程查询/日志/OCR 在回调外；只允许游戏或决策器前台触发，截图仍严格校验游戏前台。注册失败保留原通道；结束时卸载钩子。
+- 浮窗显示请求编号、来源、处理/失败/完成与耗时；焦点/可见性恢复时主动拉取结果，沿用会话编号处理服务重启。不宣称原生 F8 问题已实测解决。
+- 排查证据：旧服务注册成功但本轮实际按键事件为 0；独立 Python 查询能获取 torchlight_infinite.exe 和游戏 HWND，不能认定“进程路径权限”是根因。新版服务 runtimeVersion=2026-09-06-floating-f8-v2，hookActive/hotkeyRegistered=true。仍等待用户在游戏前台实际按 F8；查看 /hotkey-recognition 的 f8-hook/wm-hotkey/request-start/request-end 区分输入、截图与回填问题。
+- 已通过 119 项 Vitest、24 项 Python、6 张 OCR 原图回归、生产和 NSIS 构建。原安装目录 D:\渴瘾决策器 已更新（安装退出码 0）并重启，存档/手动字典未清除；Python 新版已重启，日志 recognition-floating.log / recognition-floating-error.log。
+- 渲染验证：捆绑 Playwright+Edge，http://127.0.0.1:5174/，1440×1000 / 460×680 / 390×844；两目标融合高亮、六槽、请求处理中/错误提示、真实截图上传后的名字/稀有度、常驻阶段无旧目标、展开、无横溢出/框架错误/JS错误通过。Tauri 窗口 API 为测试替身，模拟的请求响应不算物理 F8 测试。
+- 临时 QA 脚本 %TEMP%/vorax-floating-qa-20260906.cjs；截图 vorax-floating-targets-20260906.png、vorax-floating-ocr-20260906.png、vorax-floating-mobile-20260906.png、vorax-floating-full-20260906.png。React 技能要求让目标从引擎结果派生，不另存一份容易失同步的推荐状态。
+- 本轮与之前名字典修改均保留在工作区，未自动提交/推送。远程同步点仍为 7900b65。下一步优先用户实际游戏 F8 测试，不用再次改取色/进程名猜根因。
+
+## 2026-09-06 名称字典与手动记录
+
+- 内置用户明确提供的 11 条完整名称映射：寄生蝴蝶/蛊虫/稀有、刚盾卫兵/骨卫兵/稀有、禁典学者/觉醒者/稀有、邪眼异兽/异魔/稀有、堕落者与朝圣者/觉醒者/魔法、裂颚兽/异魔/魔法、轻弩兵/骨卫兵/魔法、蝎兽/异魔/普通、腐囊异兽/异魔/稀有、赤螳螂/蛊虫/魔法。同属性可以对应多个名字；邪眼翼兽与邪眼异兽不擅自合并。
+- Python 返回名称区所有完整 OCR 名字（包括未入库的学者、智者），不再只返回旧名字表命中项；种群旧兜底改为完整名称匹配。客户端在 merge 层进行字典查询，不耦合游戏规则引擎。
+- 名称可信度至少 0.85 且完整命中时补全种群和稀有度；高可信（至少 0.80）的图标/颜色冲突进入 recognitionReview，不能因命中字典而绕过核对。未知或低可信名字保留视觉兜底，不做子串或错字猜配。
+- 顶部“怪物名字典”显示未收录槽数。弹窗展示本次截图的原始名称、视觉属性和可信度；点击带入名字，手动明确选择属性。保存仅对下一次 F8/上传生效，不把旧截图重新覆盖当前局面。
+- 手动字典采用独立版本化 localStorage 键 `vorax-monster-dictionary-v1`，新牌局/撤销不清空；提供搜索、编辑、删除、JSON 导入导出。同名属性冲突须明确勾选覆盖；导入先完整校验再一次保存。写入失败不更新内存或报成功；损坏存储保留原文并提供原始备份导出。
+- 跨设备：源码 Git 不会自动同步客户端手动记录，离开旧电脑前导出 JSON，到新客户端导入。网页开发预览与桌面客户端是不同存储来源，QA 中的“学者”仅是测试数据，没有写入用户安装版字典。
+- 验证：114 项 Vitest、21 项 Python、6 张 OCR 回归、TypeScript/Vite/NSIS 构建通过。服务运行 `2026-09-06-name-dictionary-v1`；已静默更新原安装目录 `D:\渴瘾决策器`（退出码 0）并启动客户端，未清除原存档。
+- React/前端测试技能影响：字典读取惰性初始化、版本化且失败不假报成功；查询/未收录计数从当前数据派生。Browser plugin not available，项目未装 Playwright，使用已有捆绑 Playwright+Edge，无新增依赖。
+- UI QA：`http://127.0.0.1:5174/`，1440×1000 与 390×844。真实原图上传→学者待记录→明确选属性并保存→刷新/新牌局保留→导出/删除/导入恢复→同名冲突拒绝与显式覆盖→模拟配额失败不改记录→下一次缺失视觉属性的快照由名字补全→视觉冲突暂停→Escape 关闭。后两个识别分支采用真实 OCR 响应的测试变体，不代表游戏 F8 实测。
+- 页面身份、非空、无框架错误层、交互、桌面/窄屏截图、无横向溢出通过；修复截图发现的默认白底按钮不可读。控制台仅开发站点 favicon.ico 404，无其他错误。证据：`%TEMP%/vorax-monster-dictionary-desktop.png`、`vorax-monster-dictionary-mobile.png`，脚本 `vorax-monster-dictionary-qa.cjs`。
+- 边界：实际游戏前台 F8、安装版原生文件下载/上传对话框仍需用户实测。三张未建模药剂问题未在此轮扩展。此次名称功能修改尚未提交/推送；上一次远程同步点为 7900b65。
+
 ## 2026-09-06 第七回合漏识别修复（rarity-v2）
 
 - 复现原因：实时 OCR 将种群图标误读为“乐/常”，与名称同时进入取色候选，导致稀有度被拒绝；第二槽觉醒者图标与旧模板的匹配不足。名称候选带下界从 0.347 调整为 0.355，排除图标所在行；补充用户原图的异魔/觉醒者模板变体，仍保留 0.80 门槛并要求跨种群分差至少 0.08，不通过降低可信要求掩盖问题。

@@ -38,6 +38,7 @@ export interface RecognitionSnapshot {
   phase?: RecognizedValue<RecognitionScreenPhase>
   sourceImage?: RecognitionImageSource
   round?: RecognizedValue<number>
+  rerollsRemaining?: RecognizedValue<number>
   totalRounds?: RecognizedValue<number>
   displayedFinalActivity?: RecognizedValue<number>
   persistentCardIds?: Array<RecognizedValue<string>>
