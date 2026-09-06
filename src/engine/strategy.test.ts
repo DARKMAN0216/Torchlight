@@ -20,6 +20,18 @@ function oneConstructState(mode: GameState['mode']): GameState {
 }
 
 describe('strategic value model', () => {
+  it('requires rare or boss awakened for the pituitary threshold, not merely any awakened', () => {
+    const pituitary = persistentCards.find((card) => card.id === 'hypertrophic-pituitary')!
+    for (const rarity of ['common', 'magic', 'rare', 'boss'] as const) {
+      const state = oneConstructState('strategic')
+      state.monsters[0] = { ...state.monsters[0], race: 'awakened', rarity }
+      expect(evaluateStrategicState(state, pituitary).ruleValue).toBe(
+        rarity === 'rare' || rarity === 'boss' ? 84 : 0,
+      )
+      state.monsters[0].race = 'construct'
+      expect(evaluateStrategicState(state, pituitary).ruleValue).toBe(0)
+    }
+  })
   it('values progress toward the two-construct persistent threshold', () => {
     const persistent = persistentCards.find((card) => card.id === 'beast-tendon-cord')!
     const oneGroup = evaluateStrategicState(oneConstructState('strategic'), persistent)

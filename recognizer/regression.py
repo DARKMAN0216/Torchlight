@@ -13,6 +13,8 @@ SAMPLES = {
     "round-4-large-potion-box-expanded-1920x1080.png": (4, 16650, 2, 5),
     "round-10-current-checkpoint-1920x1080.png": (10, 425722, 1, 3),
     "round-11-surgery-plan-selection-1920x1080.png": (11, 463722, 1, 3),
+    "round-1-rarity-sync-2560x1440.png": (1, 228, 4, 3),
+    "round-7-rarity-icon-regression-2560x1440.png": (7, 118200, 4, 3),
 }
 
 
@@ -37,6 +39,20 @@ def main() -> None:
             len(snapshot.get("candidateCardNames", [])),
         )
         ok = actual == expected and not payload["diagnostics"]["issues"]
+        if filename == "round-1-rarity-sync-2560x1440.png":
+            actual_attributes = [(slot.get("raceId", {}).get("value"), slot.get("rarity", {}).get("value"))
+                                 for slot in snapshot["monsterSlots"][:4]]
+            expected_attributes = [("construct", "common"), ("construct", "common"),
+                                   ("awakened", "common"), ("awakened", "magic")]
+            ok = ok and actual_attributes == expected_attributes
+            print(f"  attributes={actual_attributes}")
+        if filename == "round-7-rarity-icon-regression-2560x1440.png":
+            attributes = [(slot.get('raceId', {}).get('value'), slot.get('rarity', {}).get('value'))
+                          for slot in snapshot['monsterSlots'][:4]]
+            names = [item['value'] for item in snapshot['candidateCardNames']]
+            ok = ok and attributes == [('aberrant','rare'),('awakened','common'),('awakened','rare'),('construct','magic')]
+            ok = ok and names == ['鲜脊髓药粉', '清疽油膏', '活性育卵激素']
+            print(f"  attributes={attributes}; names={names}")
         print(
             f"{'PASS' if ok else 'FAIL'} {filename}: "
             f"round={actual[0]}, activity={actual[1]}, groups={actual[2]}, cards={actual[3]}, "

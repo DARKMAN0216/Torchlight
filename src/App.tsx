@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
+import { changeFloatingWindow, type PreviousWindowState } from './desktop/floatingWindow'
 import {
   candidateCards,
   initialCandidateIds,
@@ -16,11 +16,12 @@ import { CandidateCardView } from './components/CandidateCardView'
 import { FlaskIcon, AddIcon, BookIcon, SaveIcon, ScanIcon, SettingsIcon, UndoIcon } from './components/Icons'
 import { CardCatalogDialog } from './components/CardCatalogDialog'
 import { RecommendationPanel } from './components/RecommendationPanel'
+import { PersistentRecommendation } from './components/PersistentRecommendation'
 import { RedrawStrip } from './components/RedrawStrip'
 import { StatePanel } from './components/StatePanel'
 import { localScreenRecognitionProvider } from './recognition/localBridge'
 import { mergeRecognitionSnapshot, type PersistentOffer } from './recognition/merge'
-import type { RecognitionSnapshot } from './recognition/contracts'
+import type { RecognitionSnapshot, RecognitionScreenPhase } from './recognition/contracts'
 import {
   raceIds,
   type CandidateCard,
@@ -235,6 +236,7 @@ function resolutionObservationIsValid(
 function App() {
   const [saved] = useState(() => readSavedWorkspace())
   const [state, setState] = useState<GameState>(() => saved?.state ?? initialState)
+  const recognitionNeedsReview = Boolean(state.recognitionReview?.length)
   const [persistentIds, setPersistentIds] = useState<string[]>(
     () => saved?.persistentIds ?? ['none'],
   )
@@ -249,9 +251,17 @@ function App() {
   const [status, setStatus] = useState('桌面客户端 · 启动本地识别服务后可自动回填')
   const [recognitionBusy, setRecognitionBusy] = useState(false)
   const [recognitionServiceOnline, setRecognitionServiceOnline] = useState<boolean | null>(null)
+  const [hotkeyReady, setHotkeyReady] = useState<boolean | null>(null)
+  const [hotkeyError, setHotkeyError] = useState<string | null>(null)
+  const [hotkeyBusy, setHotkeyBusy] = useState(false)
+  const [recognitionPhase, setRecognitionPhase] = useState<RecognitionScreenPhase | null>(null)
+  const [recognizedCandidateIds, setRecognizedCandidateIds] = useState<string[] | null>(null)
+  const [recognitionWarning, setRecognitionWarning] = useState('')
   const [persistentOffers, setPersistentOffers] = useState<PersistentOffer[]>([])
   const [floatingMode, setFloatingMode] = useState(false)
-  const floatingPreviousSize = useRef<{ width: number; height: number } | null>(null)
+  const [floatingBusy, setFloatingBusy] = useState(false)
+  const floatingInFlight = useRef(false)
+  const floatingPreviousSize = useRef<PreviousWindowState | null>(null)
   const recognitionFileInput = useRef<HTMLInputElement>(null)
   const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot) => void>(() => {})
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -326,8 +336,8 @@ function App() {
     observedPersistentTriggerTargetIds,
   ])
   const baseRanking = useMemo(
-    () => rankCards(state, offeredCards, persistentLoadout, evaluationContext),
-    [state, offeredCards, persistentLoadout, evaluationContext],
+    () => state.recognitionReview?.length ? [] : rankCards(state, offeredCards.filter((card) => recognizedCandidateIds === null || recognizedCandidateIds.includes(card.id)), persistentLoadout, evaluationContext),
+    [state, offeredCards, persistentLoadout, evaluationContext, recognizedCandidateIds],
   )
   const opportunityDecision = useMemo(
     () => applyOpportunityPolicy(baseRanking, rerollsRemaining),
@@ -346,7 +356,7 @@ function App() {
     [persistentOffers],
   )
   const persistentOfferRanking = useMemo(
-    () => rankPersistentChoices(state, offeredPersistentCards, persistentLoadout),
+    () => state.recognitionReview?.length ? [] : rankPersistentChoices(state, offeredPersistentCards, persistentLoadout),
     [state, offeredPersistentCards, persistentLoadout],
   )
   const persistentOfferResultById = useMemo(
@@ -371,6 +381,9 @@ function App() {
   }, [state, persistentIds, candidateIds, offerCount, rerollsRemaining, awaitingEndRound])
 
   const setCandidateAt = (index: number, id: string) => {
+    setRecognizedCandidateIds(null)
+    setRecognitionWarning('')
+    setRecognitionPhase(null)
     setCandidateIds((current) => {
       const next = [...current]
       next[index] = id
@@ -385,6 +398,9 @@ function App() {
     setCandidateIds(initialCandidateIds)
     setOfferCount(3)
     setPersistentOffers([])
+    setRecognitionPhase(null)
+    setRecognizedCandidateIds(null)
+    setRecognitionWarning('')
     setRerollsRemaining(3)
     setPendingResolution(null)
     setSelectedMonsterIds([])
@@ -396,30 +412,19 @@ function App() {
   }
 
   const toggleFloatingMode = async () => {
+    if (floatingInFlight.current) return
+    floatingInFlight.current = true
+    setFloatingBusy(true)
     try {
-      const appWindow = getCurrentWindow()
-      if (!floatingMode) {
-        const currentSize = await appWindow.innerSize()
-        floatingPreviousSize.current = { width: currentSize.width, height: currentSize.height }
-        await appWindow.setMinSize(new LogicalSize(360, 280))
-        await appWindow.setSize(new LogicalSize(430, 340))
-        await appWindow.setAlwaysOnTop(true)
-        setFloatingMode(true)
-        setStatus('浮窗已置顶：切回游戏后仍会显示 F8 识别与当前推荐')
-        return
-      }
-
-      await appWindow.setAlwaysOnTop(false)
-      await appWindow.setMinSize(new LogicalSize(1080, 680))
-      const previousSize = floatingPreviousSize.current
-      await appWindow.setSize(new LogicalSize(
-        previousSize?.width ?? 1440,
-        previousSize?.height ?? 920,
-      ))
-      setFloatingMode(false)
-      setStatus('已退出浮窗模式')
-    } catch {
-      setStatus('浮窗模式仅能在已安装的桌面客户端中使用；网页预览不支持置顶窗口')
+      const enabled = !floatingMode
+      floatingPreviousSize.current = await changeFloatingWindow(enabled, floatingPreviousSize.current)
+      setFloatingMode(enabled)
+      setStatus(enabled ? '浮窗已置顶：切回游戏后仍会显示 F8 识别与当前推荐' : '已退出浮窗模式')
+    } catch (error) {
+      setStatus(`浮窗切换失败：${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      floatingInFlight.current = false
+      setFloatingBusy(false)
     }
   }
 
@@ -783,6 +788,7 @@ function App() {
       persistentCards,
     )
     const changed = result.appliedFieldCount > 0 || result.matchedCandidateCount > 0
+      || JSON.stringify(state.recognitionReview) !== JSON.stringify(result.state.recognitionReview)
     if (changed) {
       setHistory((current) => [...current, {
         state,
@@ -801,6 +807,14 @@ function App() {
       resetObservedResolution()
     }
     setPersistentOffers(result.persistentOffers)
+    setRecognitionPhase(result.phase)
+    setRecognizedCandidateIds(result.confirmedCandidateIds)
+    setRecognitionWarning(result.unmatchedCandidateNames.length
+      ? `未匹配入库：${result.unmatchedCandidateNames.join('、')}；仅比较已识别药剂，请手动核对，未沿用旧牌推荐。`
+      : result.warnings[0] ?? '')
+    if (result.phase === 'potionSelection' || result.phase === 'expandedPotionSelection') {
+      setAwaitingEndRound(false)
+    }
 
     const latency = snapshot.diagnostics?.latencyMs
       ? ` · ${Math.round(snapshot.diagnostics.latencyMs)} ms`
@@ -816,16 +830,24 @@ function App() {
 
   applyRecognitionRef.current = applyRecognition
 
-  const recognizeScreen = () => {
+  const recognizeScreen = async () => {
+    if (recognitionBusy || hotkeyBusy) return
     if (recognitionServiceOnline === false) {
       setStatus('本地识别服务未连接。请运行 .\\scripts\\start-recognition.ps1，服务启动后 F8 会自动恢复可用')
       return
     }
-    setStatus('请保持游戏在前台后按 F8；桌面客户端会自动读取并回填识别结果')
+    setHotkeyBusy(true)
+    setStatus('截图请求已发送，正在等待本地识别…')
+    try {
+      await localScreenRecognitionProvider.triggerCapture()
+    } catch (error) {
+      setHotkeyBusy(false)
+      setStatus(`截图触发失败：${error instanceof Error ? error.message : '本地服务未连接'}`)
+    }
   }
 
   const recognizeImage = async (file: File) => {
-    if (recognitionBusy) return
+    if (recognitionBusy || hotkeyBusy) return
     setRecognitionBusy(true)
     setStatus(`正在识别截图“${file.name}”…`)
     try {
@@ -844,6 +866,7 @@ function App() {
   useEffect(() => {
     let disposed = false
     let lastSequence = 0
+    let lastSession: string | undefined
     let polling = false
     let connected = false
     let nextHealthCheckAt = 0
@@ -863,23 +886,37 @@ function App() {
           connected = true
           if (!disposed) setRecognitionServiceOnline(true)
         }
-        const event = await localScreenRecognitionProvider.readHotkeyRecognition(lastSequence)
+        const event = await localScreenRecognitionProvider.readHotkeyRecognition(lastSequence, lastSession)
         if (event && !disposed) {
+          if (lastSession !== event.sessionId) lastSequence = 0
+          lastSession = event.sessionId
+          setHotkeyReady(event.hotkeyRegistered ?? null)
+          setHotkeyError(event.hotkeyError ?? null)
+          setHotkeyBusy(event.status === 'recognizing')
+          if (event.status === 'recognizing') {
+            setStatus('F8 / 截图请求已收到，正在本机识别…')
+            return
+          }
+          if (event.sequence <= lastSequence) return
           lastSequence = event.sequence
           if (event.snapshot) applyRecognitionRef.current(event.snapshot)
-          else setStatus(`快捷键识别失败：${event.error ?? '未知错误'}`)
+          else if (event.error) setStatus(`快捷键识别失败：${event.error}`)
         }
       } catch {
         connected = false
         nextHealthCheckAt = Date.now() + 3_000
-        if (!disposed) setRecognitionServiceOnline(false)
+        if (!disposed) {
+          setRecognitionServiceOnline(false)
+          setHotkeyReady(false)
+          setHotkeyBusy(false)
+        }
       } finally {
         polling = false
       }
     }
 
     void pollHotkeyRecognition()
-    const interval = window.setInterval(() => void pollHotkeyRecognition(), 800)
+    const interval = window.setInterval(() => void pollHotkeyRecognition(), 350)
     return () => {
       disposed = true
       window.clearInterval(interval)
@@ -930,11 +967,11 @@ function App() {
           <button type="button" onClick={() => setSettingsOpen((value) => !value)}>
             <SettingsIcon /> 设置
           </button>
-          <button className="floating-toggle" type="button" onClick={() => void toggleFloatingMode()} title="缩小并置顶显示当前推荐">
+          <button className="floating-toggle" type="button" disabled={floatingBusy} onClick={() => void toggleFloatingMode()} title="缩小并置顶显示当前推荐">
             {floatingMode ? '退出浮窗' : '开启浮窗'}
           </button>
           <span className={`recognition-indicator ${recognitionServiceOnline === true ? 'online' : 'offline'}`}>
-            {recognitionServiceOnline === true ? 'F8 识别已就绪' : 'F8 识别服务未连接'}
+            {recognitionServiceOnline !== true ? '识别服务未连接' : hotkeyBusy ? '正在识别…' : hotkeyReady ? 'F8 识别已就绪' : hotkeyError ?? '请重启新版识别服务'}
           </span>
         </nav>
       </header>
@@ -962,30 +999,32 @@ function App() {
                 <strong>第 {state.round} 回合 · 当前活性 {totalActivity(state)}</strong>
               </div>
               <span className={`recognition-indicator ${recognitionServiceOnline === true ? 'online' : 'offline'}`}>
-                {recognitionServiceOnline === true ? 'F8 已就绪' : '服务未连接'}
+                {recognitionServiceOnline !== true ? '服务未连接' : hotkeyBusy ? '识别中…' : hotkeyReady ? 'F8 已就绪' : hotkeyError ?? '需重启识别服务'}
               </span>
             </div>
-            {persistentOffers.length > 0 ? (
-              <div className="floating-recommendation">
-                <span>检测到常驻手术用具</span>
-                <strong>{persistentOffers.map((offer) => offer.name).join(' · ')}</strong>
-                <p>展开完整界面后选择要追加的常驻卡。</p>
-              </div>
+            {recognitionNeedsReview ? (
+              <div className="floating-recommendation"><strong>怪物信息待核对，已暂停推荐</strong><p>{state.recognitionReview?.join('；')}</p><p>请重新识别，或展开完整界面修正并确认。</p></div>
+            ) : persistentOffers.length > 0 ? (
+              <PersistentRecommendation offers={persistentOffers} ranking={persistentOfferRanking} />
+            ) : recognitionPhase === 'surgeryPlanSelection' ? (
+              <div className="floating-recommendation"><strong>手术方案由你决定</strong><p>{state.round > 10 ? '已跳过手术方案，等待下一次药剂候选。' : '回合未超过 10，请核对阶段识别。'}</p></div>
             ) : ranking[0] ? (
               <div className="floating-recommendation">
-                <span>当前推荐</span>
+                <span>{recognitionWarning ? '已识别卡牌中的参考推荐' : '当前推荐'}</span>
                 <strong>{ranking[0].card.name}</strong>
                 <b>{ranking[0].scoreLabel} {ranking[0].scoreDelta >= 0 ? '+' : ''}{ranking[0].scoreDelta}</b>
                 <p>选择后总活性 {ranking[0].activityAfter} · F8 后自动刷新</p>
+                {ranking[0].recommendedTargetIds?.length ? <p>目标：{ranking[0].recommendedTargetIds.map((id) => id.replace('slot-', '槽位 ')).join('、')}</p> : null}
+                {recognitionWarning && <p>{recognitionWarning}</p>}
               </div>
             ) : (
-              <div className="floating-recommendation"><span>等待候选牌</span></div>
+              <div className="floating-recommendation"><strong>暂不能推荐</strong><p>{recognitionWarning || '未识别到可计算的候选药剂，请截图识别或手动录入。'}</p></div>
             )}
             <div className="floating-actions">
-              <button type="button" className="primary-button" onClick={() => void toggleFloatingMode()}>
+              <button type="button" className="primary-button" disabled={floatingBusy} onClick={() => void toggleFloatingMode()}>
                 展开完整界面
               </button>
-              <button type="button" onClick={recognizeScreen}>F8 识别状态</button>
+              <button type="button" disabled={hotkeyBusy || recognitionBusy} onClick={() => void recognizeScreen()}>{hotkeyBusy || recognitionBusy ? '识别中…' : '截图识别 / F8'}</button>
             </div>
             <small>{status}</small>
           </section>
@@ -1036,6 +1075,18 @@ function App() {
         />
 
         <div className="center-column">
+          {recognitionNeedsReview ? (
+            <section className="panel" role="alert">
+              <h2>怪物信息待核对，已暂停推荐</h2>
+              <p>{state.recognitionReview?.join('；')}</p>
+              <p>左侧保留值仅供修正，不代表本次已识别。请核对六槽的种群、稀有度和数值，或重新截图。</p>
+              <button type="button" className="primary-button" onClick={() => {
+                setState((current) => ({ ...current, recognitionReview: [] }))
+                setRecognitionWarning('')
+                setStatus('已人工确认怪物信息，恢复推荐')
+              }}>已核对怪物信息，恢复推荐</button>
+            </section>
+          ) : <>
           {persistentOffers.length > 0 ? (
             <section className="panel persistent-offer-workspace">
               <div className="panel-heading candidate-heading">
@@ -1125,13 +1176,18 @@ function App() {
             recommended={opportunityDecision.preferRedraw}
             onReroll={useReroll}
           />
+          </>}
         </div>
 
-        <RecommendationPanel
+        {recognitionNeedsReview ? (
+          <aside className="panel"><h2>暂不能推荐</h2><p>先确认怪物信息，避免用旧稀有度计算常驻收益。</p></aside>
+        ) : persistentOffers.length > 0 ? (
+          <aside className="panel"><PersistentRecommendation offers={persistentOffers} ranking={persistentOfferRanking} /></aside>
+        ) : ranking.length > 0 ? <RecommendationPanel
           ranking={ranking}
           onApply={applyRecommendation}
           disabled={awaitingEndRound}
-        />
+        /> : <aside className="panel"><h2>暂不能推荐</h2><p>{recognitionPhase === 'surgeryPlanSelection' ? '手术方案由玩家自行选择。' : recognitionWarning || '请识别完整候选卡或手动录入。'}</p></aside>}
       </main>
       )}
 

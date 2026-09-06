@@ -49,7 +49,8 @@ function evaluateRule(groups: MonsterGroup[], rule: StrategicRule): StrategicRul
   if (rule.type === 'groupThreshold') {
     const count = groups.filter((group) =>
       (!rule.race || group.race === rule.race) &&
-      (!rule.rarity || group.rarity === rule.rarity),
+      (!rule.rarity || group.rarity === rule.rarity) &&
+      (!rule.rarities || rule.rarities.includes(group.rarity)),
     ).length
     const progress = Math.min(count, rule.targetCount) * rule.progressValue
     const completion = count >= rule.targetCount ? rule.completionBonus : 0

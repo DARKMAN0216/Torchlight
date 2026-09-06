@@ -229,6 +229,7 @@ export const persistentCards: PersistentCard[] = [
       rules: [{
         type: 'groupThreshold',
         race: 'awakened',
+        rarities: ['rare', 'boss'],
         targetCount: 1,
         progressValue: 24,
         completionBonus: 60,

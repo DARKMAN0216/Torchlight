@@ -1,4 +1,4 @@
-import type { CandidateCard, GameState } from '../types/game'
+import { rarityIds, type CandidateCard, type GameState } from '../types/game'
 import type { PersistentCard } from '../types/game'
 import type { RecognitionScreenPhase, RecognitionSnapshot, RecognizedValue } from './contracts'
 import { validateRecognitionConsistency } from './validation'
@@ -23,6 +23,8 @@ export interface RecognitionMergeResult {
   matchedCandidateCount: number
   persistentOffers: PersistentOffer[]
   matchedPersistentCount: number
+  confirmedCandidateIds: string[]
+  unmatchedCandidateNames: string[]
   warnings: string[]
 }
 
@@ -120,6 +122,9 @@ export function mergeRecognitionSnapshot(
   )
   warnings.push(...consistency.issues)
   const monsterSnapshotRejected = consistency.matchesDisplayedTotal === false
+  const review: string[] = snapshot.monsterSlots?.length
+    ? [] : [...(currentState.recognitionReview ?? [])]
+  if (monsterSnapshotRejected) review.push('怪物数值与画面总活性不一致，请核对六个槽位后确认')
 
   let appliedFieldCount = 0
   const round = snapshot.round && snapshot.round.confidence >= confidenceThreshold
@@ -131,9 +136,15 @@ export function mergeRecognitionSnapshot(
   const monsters = currentState.monsters.map((monster) => {
     if (monsterSnapshotRejected) return monster
     const recognizedSlot = slotsById.get(monster.id)
-    if (!recognizedSlot || recognizedSlot.occupied.confidence < confidenceThreshold) return monster
+    if (!recognizedSlot || recognizedSlot.occupied.confidence < confidenceThreshold) {
+      if (snapshot.monsterSlots?.length) review.push(`${monster.id} 是否有怪物尚未确认`)
+      return monster
+    }
     if (!recognizedSlot.occupied.value) {
-      if (consistency.matchesDisplayedTotal !== true) return monster
+      if (consistency.matchesDisplayedTotal !== true) {
+        review.push(`${monster.id} 空槽尚未通过总活性校验`)
+        return monster
+      }
       if (monster.race) appliedFieldCount += 3
       return { ...monster, race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 }
     }
@@ -142,6 +153,17 @@ export function mergeRecognitionSnapshot(
     if (recognizedSlot.raceId && recognizedSlot.raceId.confidence >= confidenceThreshold) {
       if (next.race !== recognizedSlot.raceId.value) appliedFieldCount += 1
       next.race = recognizedSlot.raceId.value
+    } else {
+      review.push(`${monster.id} 种群未可靠识别，显示值待核对`)
+    }
+    if (recognizedSlot.rarity && recognizedSlot.rarity.confidence >= confidenceThreshold
+      && rarityIds.includes(recognizedSlot.rarity.value)) {
+      if (next.rarity !== recognizedSlot.rarity.value) appliedFieldCount += 1
+      // A new observed occupant may be lower rarity than the old saved occupant.
+      // The boss cap applies to card effects, not authoritative screen observations.
+      next.rarity = recognizedSlot.rarity.value
+    } else {
+      review.push(`${monster.id} 稀有度未可靠识别，显示值待核对`)
     }
     if (recognizedSlot.quantity && recognizedSlot.quantity.confidence >= confidenceThreshold) {
       if (next.quantity !== recognizedSlot.quantity.value) appliedFieldCount += 1
@@ -163,6 +185,8 @@ export function mergeRecognitionSnapshot(
   let matchedCandidateCount = 0
   let persistentOffers: PersistentOffer[] = []
   let matchedPersistentCount = 0
+  const confirmedCandidateIds: string[] = []
+  const unmatchedCandidateNames: string[] = []
   const names = snapshot.candidateCardNames ?? []
   if (candidatePhases.has(phase) && (names.length === 3 || names.length === 5)) {
     offerCount = names.length
@@ -172,7 +196,9 @@ export function mergeRecognitionSnapshot(
       if (match.card) {
         candidateIds[index] = match.card.id
         matchedCandidateCount += 1
+        confirmedCandidateIds.push(match.card.id)
       } else {
+        unmatchedCandidateNames.push(names[index].value)
         warnings.push(`未能可靠匹配第 ${index + 1} 张候选“${names[index].value}”`)
       }
     }
@@ -192,10 +218,12 @@ export function mergeRecognitionSnapshot(
     warnings.push('当前为手术方案阶段，但回合未超过 10；未自动跳过，请人工确认阶段')
   } else if (names.length > 0 && !candidatePhases.has(phase)) {
     warnings.push(`识别到 ${names.length} 张非药剂卡，未覆盖当前候选牌`)
+  } else if (candidatePhases.has(phase)) {
+    warnings.push(`只识别到 ${names.length} 个卡名，尚未形成完整的三卡或五卡候选；请重新截图或手动录入`)
   }
 
   return {
-    state: { ...currentState, round, monsters },
+    state: { ...currentState, round, monsters, recognitionReview: [...new Set(review)] },
     candidateIds,
     offerCount,
     phase,
@@ -203,6 +231,8 @@ export function mergeRecognitionSnapshot(
     matchedCandidateCount,
     persistentOffers,
     matchedPersistentCount,
-    warnings: [...new Set(warnings)],
+    confirmedCandidateIds,
+    unmatchedCandidateNames,
+    warnings: [...new Set([...review, ...warnings])],
   }
 }

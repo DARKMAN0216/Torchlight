@@ -349,6 +349,13 @@ select:focus-visible {
 .floating-mode .app-bar nav .recognition-indicator { display: none; }
 .floating-mode .app-bar nav .floating-toggle { display: flex; padding: 0 10px; }
 .floating-mode .status-bar { display: none; }
+.floating-mode .app-bar { flex-direction: row; align-items: center; }
+.floating-mode .brand { min-height: 40px; padding: 0; }
+.floating-mode .app-bar nav { display: flex; overflow: visible; margin-left: auto; }
+.floating-mode .floating-dashboard { place-items: start stretch; min-width: 0; }
+.floating-mode .floating-panel { min-width: 0; gap: 8px; padding: 10px; }
+.floating-mode .floating-recommendation { overflow-wrap: anywhere; }
+.floating-mode .floating-heading { flex-wrap: wrap; }
 
 .persistent-offer-grid {
   display: grid;

@@ -9,6 +9,9 @@ interface LocalRecognitionResponse {
 }
 
 interface HotkeyRecognitionResponse {
+  sessionId?: string
+  hotkeyRegistered?: boolean
+  hotkeyError?: string | null
   sequence: number
   status: 'idle' | 'recognizing' | 'completed' | 'failed'
   result: LocalRecognitionResponse | null
@@ -17,11 +20,15 @@ interface HotkeyRecognitionResponse {
 
 export interface HotkeyRecognitionEvent {
   sequence: number
+  sessionId?: string
+  status: HotkeyRecognitionResponse['status']
+  hotkeyRegistered?: boolean
+  hotkeyError?: string | null
   snapshot?: RecognitionSnapshot
   error?: string
 }
 
-async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 15_000): Promise<Response> {
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 45_000): Promise<Response> {
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -58,21 +65,32 @@ export class LocalScreenRecognitionProvider implements ScreenRecognitionProvider
     return { ...payload.snapshot, diagnostics: payload.diagnostics }
   }
 
-  async readHotkeyRecognition(afterSequence: number): Promise<HotkeyRecognitionEvent | null> {
+  async triggerCapture(): Promise<void> {
+    const response = await fetchWithTimeout(`${serviceUrl}/trigger-capture`, { method: 'POST' }, 3_000)
+    if (!response.ok) throw new Error('无法触发截图，请重启最新版识别服务后再试')
+  }
+
+  async readHotkeyRecognition(afterSequence: number, sessionId?: string): Promise<HotkeyRecognitionEvent> {
     const response = await fetchWithTimeout(`${serviceUrl}/hotkey-recognition`, undefined, 2_000)
     const payload = await response.json() as HotkeyRecognitionResponse
     if (!response.ok) {
       throw new Error(payload.error ?? `识别服务返回 ${response.status}`)
     }
-    if (payload.sequence <= afterSequence || payload.status === 'idle' || payload.status === 'recognizing') {
-      return null
-    }
-    if (payload.status === 'failed') {
-      return { sequence: payload.sequence, error: payload.error ?? '快捷键识别失败' }
-    }
-    if (!payload.result) return null
-    return {
+    const event: HotkeyRecognitionEvent = {
       sequence: payload.sequence,
+      sessionId: payload.sessionId,
+      status: payload.status,
+      hotkeyRegistered: payload.hotkeyRegistered,
+      hotkeyError: payload.hotkeyError,
+    }
+    const sameSession = payload.sessionId === sessionId
+    if ((sameSession && payload.sequence <= afterSequence) || payload.status === 'idle' || payload.status === 'recognizing') return event
+    if (payload.status === 'failed') {
+      return { ...event, error: payload.error ?? '快捷键识别失败' }
+    }
+    if (!payload.result) return event
+    return {
+      ...event,
       snapshot: { ...payload.result.snapshot, diagnostics: payload.result.diagnostics },
     }
   }

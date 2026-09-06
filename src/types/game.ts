@@ -60,6 +60,8 @@ export interface GameState {
   round: number
   mode: DecisionMode
   monsters: MonsterGroup[]
+  /** OCR uncertainty retained with saved state until a new reliable scan or manual review. */
+  recognitionReview?: string[]
 }
 
 export type Condition =
@@ -185,6 +187,7 @@ export type StrategicRule =
       type: 'groupThreshold'
       race?: RaceId
       rarity?: RarityId
+      rarities?: RarityId[]
       targetCount: number
       progressValue: number
       completionBonus: number
