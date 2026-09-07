@@ -1035,3 +1035,21 @@ button.redraw-option:hover { border-color: #7d6335; background: #211d17; }
 .floating-recommendation .startup-advice h3 { font-size: 14px; }
 .settlement-summary .positive { color: #8ee8bd; }
 .settlement-summary .negative { color: #ff9d9d; }
+.run-recording-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid #344345; font-size: 12px; color: #bcd2c9; }
+.run-recording-strip button, .run-journal-actions button, .recording-error button { padding: 6px 10px; border: 1px solid #59614e; border-radius: 4px; background: #202b29; color: #ead8ad; cursor: pointer; }
+.recording-error { padding: 12px; color: #ffafaf; background: #372326; overflow-wrap: anywhere; }
+.recording-error button { margin: 6px; }
+.run-journal-dialog { max-width: 960px; width: calc(100vw - 24px); max-height: calc(100vh - 24px); overflow: auto; }
+.run-journal-content { padding: 0 20px 20px; min-width: 0; line-height: 1.6; font-size: 13px; overflow-wrap: anywhere; }
+.run-journal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.run-journal-actions label { min-width: 0; max-width: 100%; }
+.run-journal-actions select { display: block; max-width: 100%; width: 340px; padding: 6px; background: #202b29; color: #e5ece8; }
+.run-journal-actions button:disabled { opacity: .45; cursor: default; }
+.run-tags { color: #a8c3ba; }
+.run-event-list { padding-left: 0; list-style: none; }
+.run-journal-dialog .catalog-close { flex-shrink: 0; white-space: nowrap; }
+.run-event-list li { padding: 10px 0; border-bottom: 1px solid #33403e; }
+.run-event-list summary { cursor: pointer; color: #eac482; }
+.run-event-list pre { white-space: pre-wrap; font-size: 11px; }
+.floating-mode .run-recording-strip { padding: 6px 10px; }
+@media (max-width: 480px) { .run-journal-content { padding: 0 12px 12px; } .run-journal-dialog .catalog-header { padding: 12px; gap: 8px; } }

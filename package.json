@@ -9,7 +9,9 @@
     "desktop:dev": "powershell -ExecutionPolicy Bypass -File .\\scripts\\start-desktop.ps1",
     "build": "tsc -b && vite build",
     "desktop:build": "powershell -ExecutionPolicy Bypass -File .\\scripts\\build-desktop.ps1",
-    "test": "vitest run"
+    "test": "vitest run",
+    "planner": "node scripts/run-planner.mjs",
+    "learning": "node scripts/run-learning.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

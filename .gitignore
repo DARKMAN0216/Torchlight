@@ -5,3 +5,9 @@ dist/
 *.local
 .venv-recognition/
 recognizer/__pycache__/
+work/planner-runtime/
+work/learning-*
+*.runs.jsonl
+*.value-model.json
+*.journal.json
+recording-recovery.json

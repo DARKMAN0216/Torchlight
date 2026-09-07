@@ -30,6 +30,9 @@ import { MonsterDictionaryDialog } from './components/MonsterDictionaryDialog'
 import { StartupAdvice } from './components/StartupAdvice'
 import { FloatingMonsters } from './components/FloatingMonsters'
 import { ChoiceJournal } from './components/ChoiceJournal'
+import { RunJournal } from './components/RunJournal'
+import { ClientRecorder } from './learning/clientRecorder'
+import { saveRecordingEvent } from './storage/runJournal'
 import { choicePermanent, receiveChoices, validChoiceRecords, type ChoiceRecord, type ChoiceTrackingState } from './recognition/choiceTracking'
 import { loadMonsterDictionary, monsterDictionary, normalizeMonsterName } from './recognition/monsterDictionary'
 import { localScreenRecognitionProvider, type FollowState } from './recognition/localBridge'
@@ -249,6 +252,14 @@ function resolutionObservationIsValid(
 }
 
 function App() {
+  const [recorder] = useState(() => new ClientRecorder(saveRecordingEvent))
+  const [, setRecordingRevision] = useState(0)
+  useEffect(() => recorder.subscribe(() => setRecordingRevision(n => n + 1)), [recorder])
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (recorder.pending.length) { event.preventDefault(); event.returnValue = '' } }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [recorder])
   const [saved] = useState(() => readSavedWorkspace())
   const [choiceLog, setChoiceLog] = useState(() => validChoiceRecords(saved?.choiceLog))
   const [choiceTracking, setChoiceTracking] = useState<ChoiceTrackingState | null>(null)
@@ -286,7 +297,7 @@ function App() {
   const floatingInFlight = useRef(false)
   const floatingPreviousSize = useRef<PreviousWindowState | null>(null)
   const recognitionFileInput = useRef<HTMLInputElement>(null)
-  const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot) => void>(() => {})
+  const applyRecognitionRef = useRef<(snapshot: RecognitionSnapshot, source?: 'screen' | 'import' | 'cached') => void>(() => {})
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [monsterDictionaryOpen, setMonsterDictionaryOpen] = useState(false)
@@ -445,6 +456,7 @@ function App() {
   }
 
   const startNewGame = () => {
+    recorder.start('new-game')
     void localScreenRecognitionProvider.controlChoices('reset').catch(() => setStatus('新局已创建，但监听重置失败，请重启识别服务后 F8'))
     setHistory([])
     setState(initialState)
@@ -844,6 +856,8 @@ function App() {
   const choosePersistentOffer = (id: string) => {
     const card = persistentCardById.get(id)
     if (!card || card.id === 'none') return
+    recorder.recordChoice({ id: crypto.randomUUID(), round: state.round, phase: 'surgeryRewardSelection', name: card.name,
+      cardIndex: persistentOffers.findIndex(offer => offer.cardId === id), status: 'manual', targetSlots: [] })
     void localScreenRecognitionProvider.controlChoices('reset').catch(() => {})
     setPersistentIds((current) => current.includes(id)
       ? current
@@ -852,7 +866,8 @@ function App() {
     setStatus(`已选择“${card.name}”并追加为常驻手术用具；收益从后续回合开始计算`)
   }
 
-  const applyRecognition = (snapshot: RecognitionSnapshot) => {
+  const applyRecognition = (snapshot: RecognitionSnapshot, source: 'screen' | 'import' | 'cached' = 'screen') => {
+    if (source !== 'cached') recorder.capture(snapshot, source, state.mode, persistentIds, monsterNames.entries)
     setLastMonsterSnapshot(snapshot)
     const result = mergeRecognitionSnapshot(
       state,
@@ -921,6 +936,7 @@ function App() {
   applyRecognitionRef.current = applyRecognition
 
   receiveChoicesRef.current = (tracking) => {
+    recorder.choices(tracking)
     setChoiceTracking(current => JSON.stringify(current) === JSON.stringify(tracking ?? null) ? current : tracking ?? null)
     if (!tracking) return
     const next = receiveChoices(choiceLog, tracking.records, persistentIds, persistentCards)
@@ -931,6 +947,7 @@ function App() {
   }
 
   const confirmRecordedChoice = (record: ChoiceRecord) => {
+    recorder.recordChoice({ ...record, status: 'manual' })
     const card = choicePermanent(record, persistentCards)
     if (card) setPersistentIds(current => [...new Set([...current.filter(id => id !== 'none'), card.id])])
     setChoiceLog(current => current.map(r => r.id === record.id ? { ...r, status: 'manual' } : r))
@@ -966,7 +983,7 @@ function App() {
       if (!await localScreenRecognitionProvider.isAvailable()) {
         throw new Error('本地识别服务未启动，请先运行 .\\scripts\\start-recognition.ps1')
       }
-      applyRecognition(await localScreenRecognitionProvider.recognizeImage(file))
+      applyRecognition(await localScreenRecognitionProvider.recognizeImage(file), 'import')
     } catch (error) {
       setStatus(`识别失败：${error instanceof Error ? error.message : '未知错误'}`)
     } finally {
@@ -982,6 +999,7 @@ function App() {
     let lastFollowGeneration: number | undefined
     let polling = false
     let connected = false
+    let receivedServiceEvent = false
     let nextHealthCheckAt = 0
 
     const pollHotkeyRecognition = async () => {
@@ -1003,7 +1021,12 @@ function App() {
         const event = await localScreenRecognitionProvider.readHotkeyRecognition(lastSequence, lastSession)
         if (requestEpoch !== followControlEpoch.current) return
         if (event && !disposed) {
-          if (lastSession !== event.sessionId) { lastSequence = 0; lastAutoSnapshot.current = '' }
+          const initialServiceSnapshot = !receivedServiceEvent
+          receivedServiceEvent = true
+          if (lastSession !== event.sessionId) {
+            if (lastSession) recorder.gap('识别服务重启，选牌上下文可能丢失')
+            lastSequence = 0; lastAutoSnapshot.current = ''
+          }
           if (lastFollowGeneration !== event.follow?.generation) lastAutoSnapshot.current = ''
           lastFollowGeneration = event.follow?.generation
           lastSession = event.sessionId
@@ -1025,10 +1048,10 @@ function App() {
             const key = snapshotIdentity(event.snapshot)
             if (event.triggerSource !== 'continuous-follow' || key !== lastAutoSnapshot.current) {
               if (event.triggerSource === 'continuous-follow') lastAutoSnapshot.current = key
-              applyRecognitionRef.current(event.snapshot)
+              applyRecognitionRef.current(event.snapshot, initialServiceSnapshot ? 'cached' : 'screen')
             }
           }
-          else if (event.error) setStatus(`快捷键识别失败：${event.error}`)
+          else if (event.error) { recorder.gap(`截图识别失败：${event.error}`); setStatus(`快捷键识别失败：${event.error}`) }
         }
       } catch {
         connected = false
@@ -1115,9 +1138,11 @@ function App() {
         <span>{recognitionServiceOnline === false ? '识别服务未连接，请启动新版服务' : '按一次 F8 截图一次；游戏选牌后，再按 F8 同步结果。'}</span>
         <span>点牌 → 游戏确认 → 下次 F8 校验；已知常驻自动追加，药剂仅记录、不重复结算。</span>
       </div>
+      <RunJournal recorder={recorder} />
       <ChoiceJournal tracking={choiceTracking} log={choiceLog} online={recognitionServiceOnline === true}
         onToggle={() => void localScreenRecognitionProvider.controlChoices(choiceTracking?.enabled ? 'disable' : 'enable').catch(error => setStatus(String(error)))}
         onConfirm={confirmRecordedChoice} onIgnore={record => {
+          recorder.recordChoice({ ...record, status: 'ignored' })
           setChoiceLog(current => current.map(r => r.id === record.id ? { ...r, status: 'ignored' } : r))
           setStatus('已标记误记；若该条追加了常驻，请在完整界面取消对应勾选')
         }} />

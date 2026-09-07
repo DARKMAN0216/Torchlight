@@ -3,7 +3,10 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             user_data::load_user_data,
-            user_data::save_user_data
+            user_data::save_user_data,
+            run_journal::save_recording_event,
+            run_journal::list_recorded_runs,
+            run_journal::read_recorded_run
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -19,3 +22,4 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 mod user_data;
+mod run_journal;

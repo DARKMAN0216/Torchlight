@@ -16,7 +16,7 @@ fn filename(key: &str) -> Result<&'static str, String> {
         _ => Err("Unsupported storage key".into()),
     }
 }
-fn root() -> Result<PathBuf, String> {
+pub(crate) fn root() -> Result<PathBuf, String> {
     // Independent of install path, application version and WebView origin.
     std::env::var_os("LOCALAPPDATA")
         .map(|p| {
@@ -74,7 +74,7 @@ fn read_at(dir: &Path, key: &str) -> Result<Option<String>, String> {
 }
 
 #[cfg(windows)]
-fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     extern "system" {
@@ -91,7 +91,7 @@ fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 #[cfg(not(windows))]
-fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn replace_file(from: &Path, to: &Path) -> Result<(), String> {
     fs::rename(from, to).map_err(|e| e.to_string())
 }
 
