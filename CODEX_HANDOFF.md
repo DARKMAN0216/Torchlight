@@ -1,5 +1,13 @@
 # Codex handoff — 渴瘾决策器
 
+## 2026-09-08 14:52 推送与本机安装完成
+
+- 用户要求“推送，然后安装”；源码 ab34fdd 已推送 origin/main 并用 ls-remote 核对。直连HTTPS两次失败，使用系统已启用的 127.0.0.1:7897 代理完成；只使用单次 git -c http.proxy，不更改全局配置。SSH尝试因严格主机校验未通过而停止，未修改known_hosts或降低校验。
+- 419项测试再次通过，pnpm desktop:build 完成 TypeScript/Vite、Rust release、NSIS。安装包1,995,924字节，SHA256 9EE37122F452991A97C47DD3124231B3AB554F2887EE18973D71CE01E6B76F3B。
+- 安装前未检测到客户端进程；按 scripts/install-update.ps1 的 /S /UPDATE 安装到 D:/渴瘾决策器，exit0。安装EXE 8,805,888字节，SHA256 DD02F0AC4BFFC023879D383A4064C5582B21FABE8413270B636942DA4C6DE9D7；与本次release逐字节核对，仅Tauri包类型 UNK→NSS 的3字节差异，其余全部一致。
+- 当前账户为 C:/Users/24901。安装前没有发现现用 user-data 或 EBWebView/Default/Local Storage 目录；**不能把其他环境的“12条字典已保留”记录套用于本机**。历史备份目录未改动；本次安全入口创建备份位置 C:/Users/24901/AppData/Local/VoraxDecisionAssistant/backups/upgrade-20260908-145243-8dd3b796a0c84281b48d1e4407425156，但没有现用存档文件可备份。不自动恢复或导入其他环境数据。
+- 未启动GUI、未重启识别服务。下一步用户从原入口打开并实测F8；如预期本机应有旧字典/局面，先核对账户与迁移来源。真实四卡OCR、病躯满槽公式等边界继续以 SPECIAL_POTION_CALIBRATION.md 为准。下方未推送/未安装均为历史检查点。
+
 ## 2026-09-08 本地提交检查点
 
 本次提交统一收录24张常驻、7张常规药剂、8张特殊药剂分支、419项测试及相关工作流文档。未推送远程、未打包安装、未操作用户数据或识别服务。下方“未提交”为阶段性历史记录；后续机制缺口仍以 SPECIAL_POTION_CALIBRATION.md 为准。本次仅归档现有实现，不把待确认规则改称完整实现。

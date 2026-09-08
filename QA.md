@@ -1,5 +1,9 @@
 # 界面与交互验收
 
+## 2026-09-08 14:52 推送与安装验收
+
+源码 ab34fdd 已推送并核对远端main。419项测试、TypeScript/Vite/Rust release/NSIS成功；install-update.ps1 安全升级 D:/渴瘾决策器 exit0；安装EXE与本次release仅Tauri包标记3字节差异。安装前后无客户端启动、未重启服务。当前24901账户无现用字典/存档目录，备份入口不能证明其他环境旧数据已迁移；未自动恢复。真实原生启动/F8及四卡OCR仍待用户验收。安装包及EXE SHA256、备份位置见 CODEX_HANDOFF 顶部。
+
 ## 2026-09-08 特殊药剂校准
 
 419测试（本轮新增31项）、TypeScript/Vite、CLI coverage33药剂/24常驻和demo通过。Playwright/Edge，Browser plugin not available，http://127.0.0.1:5175/，1440×1000、390×844：3→4候选切换、空心茧身份确认后虫母重算、专属基础值非法JSON拒绝/合成JSON导入、刷新保存、实际怪物不被预览修改；页面身份/非空/无错误遮罩/无控制台错误/无横向溢出通过，截图已检查。临时脚本/截图：仓库外work/special-potions-qa.cjs及special-potions-{desktop,mobile}.png。未验真实四卡OCR/鼠标关联/原生新包；未知基础值、病躯满槽、虫母自身计数/取整与发牌权重详见 SPECIAL_POTION_CALIBRATION.md。未安装/推送。
