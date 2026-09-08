@@ -1,5 +1,36 @@
 # Codex handoff — 渴瘾决策器
 
+## 2026-09-08 本地提交检查点
+
+本次提交统一收录24张常驻、7张常规药剂、8张特殊药剂分支、419项测试及相关工作流文档。未推送远程、未打包安装、未操作用户数据或识别服务。下方“未提交”为阶段性历史记录；后续机制缺口仍以 SPECIAL_POTION_CALIBRATION.md 为准。本次仅归档现有实现，不把待确认规则改称完整实现。
+
+## 2026-09-08 特殊药剂与胆汁补充（当前源码；未提交/推送/安装）
+
+- 用户补充后新增8张特殊药剂共享分支，详情与逐卡未确认项见 SPECIAL_POTION_CALIBRATION.md；前述7张常规药剂/24常驻修改原样保留，全部仍未提交。
+- planner/specialPotions.ts：空心茧专属值，三代复制成长前快照/满槽原组成长，虫母活茧身份约束/百分比相加，圣餐生成后结算，病躯有空位出生，完整骨架即时结算。病躯满槽增量明确阻断；虫母“每组蛊虫”暂含自身并警示待验证，小数取整未确认会阻断。
+- specialOffer 区分 additional/replace；选择非延续卡清空；满槽空心茧仍续发；未知 specialOfferPools 权重阻断未来规划，不把高概率当必出。桌面只显示本轮预览与后续提示，不自动抽牌/写回局面；其余11特殊尚未统一迁移。
+- GameState.specialIdentity 与 planner特殊monsterId支持空心茧；可靠名字识别、手动确认、变异/移除清除、未知不继承。specialBases.hollowCocoon 独立于 rarityBases，设置JSON可导入。界面/保存/识别结果合并支持3/4/5候选；真实四卡Python OCR未实图验证。
+- 基线388→419测试、生产构建、CLI coverage33/24、demo通过。React技能保持派生UI，前端测试技能要求渲染；Browser plugin not available，Playwright/Edge独立上下文1440×1000与390×844通过四卡切换/身份重算/JSON拒绝与导入/刷新保留/不写预测/无错误遮罩或横向溢出。三特殊无常驻合成场景冷算约41.2ms、缓存0.09ms，仅单场景。
+- QA脚本与截图在仓库外的work/special-potions-*；真实用户存档/字典/安装版/识别服务未操作。未提交/推送/打NSIS/安装。下一步补真实基础值、病躯前后变化、虫母自身计数/取整、特殊出率与实战四卡图，再推进其余特殊系列。
+
+## 2026-09-08 七张药剂用户确认（当前源码；未提交/推送/安装）
+
+- 用户已确认七张常规药剂，特殊药剂留下一段。完整规则/未确认边界及数据结构见 POTION_CALIBRATION.md，优先于下方历史模型。
+- 新增 planner/confirmedPotions.ts、rarityBases.ts、confirmedPotions.test.ts、engine/confirmedPotions.ts；模拟器添加不推进回合的药剂预览，桌面与CLI共用。按名称保留全部原ID。
+- 新生同名=种群/稀有度一致但用基础值；黏稠胆汁只复制身份；蜕生皮必须两目标、结果随机稀有度、两属性分别求和；异种先全移除再添加；诱虫溢出逐次包含新蛊虫；育卵每组独立稀有度。
+- rarityBases 独立于 rarityPriors/raritySamples；缺真实四档值、不明概率和右空胆汁仍显式阻断。预览不写入实际局面；抽样不算确定启动，新增/融合现有实例规则不重复触发。
+- 388项测试、生产构建、Planner coverage25/24、demo41578转移通过。Playwright/Edge独立上下文（Browser plugin not available），1440/390导入重算/重启保存/两目标与无溢出交互；示例数值不是真实数据。复杂三候选冷算118ms，缓存均值0.21ms，仅单场景。
+- React技能保持配置和建议为派生显示；前端测试技能指导实际交互检查。外层work/potions-qa.cjs与截图，不放Git。未更改真实用户数据、服务、安装版；未打新NSIS、未提交/推送。
+
+## 2026-09-08 常驻 24 张实现（当前源码；未提交/推送/安装）
+
+- 本轮针对常驻审计的缺口，实现24张共享声明 `planner/persistentCatalog.ts`、扩充模拟器、桌面 `engine/sharedPassives.ts` 接入；保留原药剂引擎和独立未来搜索，不声称全药剂完成。
+- 新增 `PersistentModelSettings` 与 JSON 校验、获得回合记录；随机有界枚举/抽样不写回实际状态，未知值阻断推荐和重抽估算。逐卡表、数据格式和未确认假设详见 PERMANENT_COVERAGE.md。
+- 测试基线319→365项；生产构建、Planner coverage24/24和demo、三尺寸 Playwright/Edge通过。模拟窗口IPC/识别服务；没有操作真实用户数据。性能单场景约2.9ms首次、0.31ms缓存均值。
+- React技能指导共享纯规则与派生展示；前端测试技能要求真实渲染。Browser plugin not available，使用本机Playwright。外层work/passives-qa.cjs与截图供复核，不放Git。
+- 已完成源码；待实战校准：人蛹总X/额外X、全局周期、同类变异、吞噬/融合属性与事件顺序、真实生成和升阶样本。有限样本不能冒充完整概率分布。
+- 安装版仍是下面自动记录版本；本次未更新NSIS/安装/提交/推送/重启服务。需安装时按现有保数据流程，不能直接覆盖清数据。
+
 ## 2026-09-08 00:00 自动记录版已安全安装
 
 - 用户确认决策器未开启；进程检查无残留，319项测试和生产构建重新通过，安装包SHA256仍为D1841A198C5321293EEC517059CB7B4C8E509215E79D9E146849DB3CE2AE60C7。

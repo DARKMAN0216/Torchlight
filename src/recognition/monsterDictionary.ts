@@ -6,6 +6,7 @@ export interface MonsterNameEntry { name: string; race: RaceId; rarity: RarityId
 export const monsterDictionaryKey = 'vorax-monster-dictionary-v1'
 // User-confirmed on 2026-09-06. Different names may share the same attributes.
 export const builtinMonsterNames: readonly MonsterNameEntry[] = [
+  { name: '空心茧', race: 'swarm', rarity: 'boss' },
   { name: '寄生蝴蝶', race: 'swarm', rarity: 'rare' },
   { name: '刚盾卫兵', race: 'construct', rarity: 'rare' },
   { name: '禁典学者', race: 'awakened', rarity: 'rare' },

@@ -49,6 +49,7 @@ export interface ResolutionObservation {
 }
 
 export interface MonsterGroup {
+  specialIdentity?: 'hollow-cocoon' | 'ordinary' | 'unknown'
   id: string
   race: RaceId | null
   rarity: RarityId
@@ -57,6 +58,10 @@ export interface MonsterGroup {
 }
 
 export interface GameState {
+  persistentAcquiredRounds?: Record<string, number>
+  /** Explicit simulation data, separate from OCR name→race/rarity mappings. */
+  persistentModel?: Partial<Pick<import('../planner/types').PlannerModel,
+    'monsters' | 'raritySamples' | 'rarityPriors' | 'rarityBases' | 'specialBases' | 'pupaRepetitions' | 'persistentOrder'>>
   /** User-confirmed base stats for an added swarm; never inferred from old monsters. */
   newbornSwarm?: { quantity: number; unitActivity: number; rarity: RarityId }
   round: number
@@ -225,6 +230,8 @@ export interface StrategicProfile {
 }
 
 export interface CandidateCard {
+  /** Uses the same calibrated potion rules as the planner. */
+  confirmedPotion?: boolean
   /** Multi-outcome preview only; actual outcomes must be imported from the game. */
   projection?: 'cleansing' | 'leechRace' | 'leechRarity' | 'freshSpinal' | 'birthBone' | 'graySpinal' | 'aberrantAnesthetic' | 'hollowSpinal' | 'lowestBoost' | 'boneOil' | 'peat' | 'compound' | 'seriesMutation' | 'seriesRemoval' | 'egg' | 'exorcise' | 'randomRareMutation' | 'randomMagicMutation'
   /** Card-text-only route information; does NOT supply missing new-monster stats. */
@@ -249,6 +256,7 @@ export interface CandidateCard {
 }
 
 export interface PersistentCard {
+  sharedRules?: boolean
   modelWarning?: string
   /** Preview only: repetition wording has two possible interpretations. */
   roundEndQuantityPerRaceGroup?: { race: RaceId; amount: number }
@@ -284,6 +292,9 @@ export interface PersistentCard {
 export type PersistentLoadout = PersistentCard | readonly PersistentCard[]
 
 export interface EvaluationResult {
+  sampledOutcomes?: boolean
+  requiresOutcomeSync?: boolean
+  modelUnavailable?: string
   /** Final race counts across branches; bounds, NOT probabilities. */
   raceGroupRange?: Partial<Record<RaceId, { minimum: number; maximum: number }>>
   startup?: {
@@ -295,6 +306,7 @@ export interface EvaluationResult {
   }
   /** Preview only. Never applied to the observed/immediate board. */
   settlement?: {
+    unavailable?: string
     uncertain: boolean
     beforeBonus: number
     afterBonus: number
@@ -318,6 +330,7 @@ export interface EvaluationResult {
 }
 
 export interface RedrawEstimate {
+  unavailable?: string
   drawCount: number
   expectedBest: number
   expectedDelta: number

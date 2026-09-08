@@ -61,8 +61,9 @@ describe('rule engine', () => {
       totalActivity(initialState),
     )
 
-    const poolSize = candidateCards.filter(card => !card.evaluationUnavailable && !card.requiresNewbornSwarm && !card.excludeFromRedraw).length
-    expect(estimate.sampleCount).toBe(poolSize * (poolSize - 1) * (poolSize - 2) * (poolSize - 3) * (poolSize - 4) / 120)
+    // New calibrated births are known mechanics but require explicit rarity bases.
+    expect(estimate.sampleCount).toBe(0)
+    expect(estimate.unavailable).toContain('缺少结算数据')
     expect(Number.isFinite(estimate.minimumBest)).toBe(true)
     expect(Number.isFinite(estimate.maximumBest)).toBe(true)
   })
@@ -207,8 +208,7 @@ describe('rule engine', () => {
     expect(result.state.monsters[2]).toMatchObject({ quantity: 162, unitActivity: 15 })
     expect(result.state.monsters[3].race).toBeNull()
     expect(result.activityAfter).toBe(7170)
-    expect(result.trace).toContain('挛缩指爪第 1 次触发：骨卫兵（槽位 2）+150 数量')
-    expect(result.trace).toContain('挛缩指爪第 2 次触发：觉醒者（槽位 3）+150 数量')
+    expect(result.trace.join()).toContain('常驻事件链结算（挛缩指爪）')
 
     const ranked = rankCards(state, [card], persistent)[0]
     expect(ranked.recommendedTargetIds).toEqual(['slot-2'])
@@ -448,7 +448,7 @@ describe('rule engine', () => {
     expect(result.warnings).toContain('培养皿已满，未能添加蛊虫')
   })
 
-  it('combines persistent cards and prices writhing spinal as an expected on-add bonus', () => {
+  it('combines persistent cards and keeps uncertain spinal growth in the conservative preview', () => {
     const card = candidateCards.find((item) => item.id === 'spinal-solution-awakened')!
     const loadout = persistentCards.filter((item) =>
       ['contracted-claw', 'writhing-spinal'].includes(item.id),
@@ -456,8 +456,8 @@ describe('rule engine', () => {
     const result = evaluateCard(initialState, card, loadout)
 
     expect(result.activityAfter).toBe(1617)
-    expect(result.score).toBe(2337)
-    expect(result.trace.some((line) => line.includes('期望活性 +720'))).toBe(true)
+    expect(result.score).toBe(1617)
+    expect(result.analysis.join()).toContain('0–960')
     expect(result.warnings.some((line) => line.includes('概率事件'))).toBe(true)
   })
 
@@ -530,14 +530,13 @@ describe('rule engine', () => {
     ].includes(card.id))
     const ranking = rankCards(state, offered, loadout)
 
-    expect(ranking[0].card.id).toBe('molting-skin-solution')
-    expect(ranking[0].recommendedTargetIds).toEqual(['slot-2', 'slot-3'])
-    expect(ranking[0].activityAfter).toBe(37680)
-    expect(ranking[0].trace).toContainEqual(expect.stringContaining('挛缩指爪第 1 次触发'))
-    expect(ranking[0].analysis).toContainEqual(expect.stringContaining('蠕动脊髓'))
-    expect(ranking[1].card.id).toBe('brain-fog-tincture')
-    expect(ranking[1].activityAfter).toBe(29606)
-    expect(ranking[1].analysis[0]).toContain('29606–42732')
+    expect(ranking[0].card.id).toBe('brain-fog-tincture')
+    expect(ranking[0].activityAfter).toBe(29606)
+    expect(ranking[0].analysis[0]).toContain('29606–42732')
+    const fusion = ranking.find(r => r.card.id === 'molting-skin-solution')!
+    expect(fusion.recommendedTargetIds).toEqual(['slot-2','slot-3'])
+    expect(fusion.activityAfter).toBe(37680)
+    expect(fusion.analysis.join()).toContain('蠕动脊髓')
   })
 
   it('recommends digestive enzyme on the round-five board and keeps the empty left slot harmless', () => {
@@ -637,26 +636,17 @@ describe('rule engine', () => {
     expect(ranking[0].card.id).toBe('molting-skin-solution')
     expect(ranking[0].recommendedTargetIds).toEqual(['slot-2', 'slot-3'])
     expect(ranking[0].activityAfter).toBe(212520)
-    expect(ranking[0].state.monsters[0]).toMatchObject({
-      race: 'swarm',
-      quantity: 660,
-      unitActivity: 322,
-    })
-    expect(ranking[0].state.monsters[1].race).toBeNull()
-    expect(ranking[0].trace).toContainEqual(expect.stringContaining('挛缩指爪第 1 次触发'))
-    expect(ranking[0].analysis).toContainEqual(expect.stringContaining('期望活性 +39600'))
+    expect(ranking[0].state).toEqual(state)
+    expect(ranking[0].activityRange).toEqual({ minimum: 212520, maximum: 265320 })
+    expect(ranking[0].settlement?.projectedActivity).toBe(225720)
 
     const observedResult = evaluateCard(state, ranking[0].card, loadout, {
       selectedMonsterIds: ['slot-2', 'slot-3'],
       observedAddedGroupMutationIdsByCardId: { 'writhing-spinal': ['slot-1'] },
     })
-    expect(observedResult.activityAfter).toBe(265320)
-    expect(observedResult.state.monsters[0]).toMatchObject({
-      race: 'aberrant',
-      quantity: 660,
-      unitActivity: 402,
-    })
-    expect(observedResult.analysis).toContainEqual(expect.stringContaining('实际触发'))
+    // Knowing spinal success alone does not determine the new random fusion rarity.
+    expect(observedResult.state).toEqual(state)
+    expect(observedResult.requiresOutcomeSync).toBe(true)
   })
 
   it('recommends digestive enzyme for the confirmed round-eight board', () => {
@@ -718,9 +708,9 @@ describe('rule engine', () => {
 
     const twin = ranking.find((result) => result.card.id === 'twin-hormone-swarm')!
     expect(twin.card.modelCoverage).toBe('partial')
-    expect(twin.state.monsters[0].race).toBe('swarm')
+    expect(twin.state.monsters[0].race).toBe('aberrant')
     expect(twin.activityAfter).toBe(425722)
-    expect(twin.trace).toContainEqual(expect.stringContaining('新增同名组'))
+    expect(twin.modelUnavailable).toContain('rarityBases')
 
     const mixed = ranking.find((result) => result.card.id === 'mixed-live-leech-solution')!
     expect(mixed.card.modelCoverage).toBe('partial')

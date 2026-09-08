@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import { parsePersistentModel } from '../engine/persistentModelData'
 
 export const dictionaryKey = 'vorax-monster-dictionary-v1'
 export const workspaceKey = 'vorax-decision-assistant-state-v4'
@@ -22,11 +23,19 @@ export function validateUserData(key: string, raw: string): void {
   } else if (key === workspaceKey) {
     const state = value?.state
     valid = Array.isArray(state?.monsters) && state.monsters.length === 6 &&
-      state.monsters.every((m: { race: string | null; rarity: string; quantity: number; unitActivity: number }) =>
+      state.monsters.every((m: { race: string | null; rarity: string; quantity: number; unitActivity: number; specialIdentity?: string }) =>
         m && (m.race === null || races.includes(m.race)) && rarities.includes(m.rarity) &&
+        (m.specialIdentity === undefined || ['hollow-cocoon','ordinary','unknown'].includes(m.specialIdentity)) &&
+        (m.specialIdentity !== 'hollow-cocoon' || (m.race === 'swarm' && m.rarity === 'boss')) &&
         Number.isFinite(m.quantity) && m.quantity >= 0 && Number.isFinite(m.unitActivity) && m.unitActivity >= 0) &&
       Number.isFinite(state.round) && ['activity', 'preserve', 'strategic'].includes(state.mode) &&
       Array.isArray(value.persistentIds) && Array.isArray(value.candidateIds)
+    if (valid && state.persistentModel !== undefined) parsePersistentModel(JSON.stringify(state.persistentModel))
+    if (valid && state.persistentAcquiredRounds !== undefined) {
+      const acquired = state.persistentAcquiredRounds
+      valid = Boolean(acquired && typeof acquired === 'object' && !Array.isArray(acquired)
+        && Object.values(acquired).every(round => Number.isSafeInteger(round) && (round as number) >= 0))
+    }
   }
   if (!valid) throw new Error(`${key} 数据格式无效；已停止启动或保存，不覆盖原文件。`)
 }

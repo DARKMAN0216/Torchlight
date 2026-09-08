@@ -27,6 +27,8 @@ export function CandidateCardView({
   onCardChange,
   onApply,
 }: CandidateCardViewProps) {
+  const modelBlocked = Boolean(result?.modelUnavailable)
+  recommended = recommended && !modelBlocked
   return (
     <article className={`candidate-card rarity-${card.rarity} ${recommended ? 'recommended' : ''} ${pending ? 'pending' : ''}`}>
       <div className="card-topline">
@@ -52,7 +54,8 @@ export function CandidateCardView({
       <div className="card-tags">{synchronizationCopy(card.tags.join(' · '), following)}</div>
       <p className="card-description">{card.description}</p>
       <div className="card-rule" />
-      {result ? <><div className="card-metric">
+      {modelBlocked ? <><div className="card-metric"><span>完整收益尚不可计算</span><strong>缺少数据</strong></div>
+        {result && <SettlementSummary result={result} />}</> : result ? <><div className="card-metric">
         <span>{result.scoreLabel}变化</span>
         <strong className={result.scoreDelta >= 0 ? 'positive' : 'negative'}>
           {result.scoreDelta >= 0 ? '+' : ''}{result.scoreDelta}
@@ -67,7 +70,7 @@ export function CandidateCardView({
         {card.requiresNewbornSwarm && <p>请在设置中确认新蛊虫基础属性后计算。</p>}</div>}
       {card.targeting && (
         <div className="card-target-note">
-          {result?.recommendedTargetIds?.length
+          {!modelBlocked && result?.recommendedTargetIds?.length
             ? `建议目标：${result.recommendedTargetIds.map((id) => id.replace('slot-', '槽位 ')).join('、')}`
             : card.targeting.mode === 'observedRandom'
               ? following ? '随机结果将自动读取' : '需记录随机命中目标'
@@ -82,8 +85,8 @@ export function CandidateCardView({
           {card.modelCoverage === 'partial' ? '部分建模' : '规则待确认'}：{synchronizationCopy(card.modelWarning ?? '', following)}
         </div>
       )}
-      <button className="card-apply-button" type="button" disabled={disabled || card.evaluationUnavailable || card.requiresScreenSync} onClick={onApply}>
-        {following ? '在游戏使用后自动同步' : card.evaluationUnavailable || card.requiresScreenSync ? '游戏使用后按 F8 同步' : disabled
+      <button className="card-apply-button" type="button" disabled={disabled || modelBlocked || card.evaluationUnavailable || card.requiresScreenSync} onClick={onApply}>
+        {following ? '在游戏使用后自动同步' : modelBlocked || card.evaluationUnavailable || card.requiresScreenSync ? '游戏使用后按 F8 同步' : disabled
           ? '等待回合结束结算'
           : card.followUpOfferCount
             ? `展开 ${card.followUpOfferCount} 张药剂`

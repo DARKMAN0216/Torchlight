@@ -14,6 +14,12 @@ interface RecommendationPanelProps {
 export function RecommendationPanel({ ranking, onApply, disabled = false, coverageWarning = '', following = false }: RecommendationPanelProps) {
   const best = ranking[0]
   if (!best) return null
+  const blocked = ranking.filter(item => item.modelUnavailable)
+  if (blocked.length) return <aside className="panel recommendation-panel">
+    <h2>暂不能给出完整推荐</h2>
+    <p>部分候选的药剂或常驻结算缺少数据/规则确认，请先补充后再比较完整收益。</p>
+    {blocked.map((item, i) => <p key={`${item.card.id}-${i}`}>{item.card.name}：{item.modelUnavailable}</p>)}
+  </aside>
   const incompleteCards = ranking.filter((item) =>
     item.card.modelCoverage && item.card.modelCoverage !== 'confirmed',
   )

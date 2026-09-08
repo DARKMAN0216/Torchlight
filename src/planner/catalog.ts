@@ -1,12 +1,15 @@
 import { candidateCards, persistentCards } from '../data/sampleLibrary'
 import { realCardCatalog } from '../data/realCardCatalog'
 import type { CardDefinition, PersistentDefinition, PlannerModel, Selector, TargetRule } from './types'
+import { implementedPersistent } from './persistentCatalog'
+import { confirmedPotions } from './confirmedPotions'
+export { implementedPersistent } from './persistentCatalog'
 
 const selected: Selector = { mode: 'selected' }
-const all: Selector = { mode: 'all' }
 const chooseOne: TargetRule = { mode: 'choose', min: 1, max: 1 }
 const chooseTwo: TargetRule = { mode: 'choose', min: 1, max: 2 }
 export const implementedCards: CardDefinition[] = [
+  ...confirmedPotions,
   { id: 'soft-meningeal-solution', name: '软脑膜溶液', targeting: chooseOne,
     effects: [{ type: 'stats', target: selected, activity: 30, awakenedRarityRepeat: true }] },
   { id: 'probiotic-mold-solution', name: '益生霉溶液',
@@ -40,9 +43,6 @@ export const implementedCards: CardDefinition[] = [
     effects: [{ type: 'add', count: 1, spec: { filter: { race: 'construct' }, quantityBonus: 73 } }] },
   { id: 'spinal-solution-aberrant', name: '脊髓溶液-异魔',
     effects: [{ type: 'add', count: 1, spec: { filter: { race: 'aberrant' }, activityBonus: 31 } }] },
-  { id: 'active-oviposition-hormone', name: '活性育卵激素',
-    effects: [{ type: 'add', count: 1, spec: { filter: { race: 'swarm' } } },
-      { type: 'chance', probability: .5, effects: [{ type: 'add', count: 2, spec: { filter: { race: 'swarm' } } }] }] },
   { id: 'targeted-xeno-hormone', name: '靶向异种激素', targeting: chooseOne,
     effects: [{ type: 'remove', target: selected },
       { type: 'add', count: 2, spec: { filter: { rarities: ['magic'] }, quantityBonus: 25 } }] },
@@ -60,28 +60,6 @@ export const implementedCards: CardDefinition[] = [
     effects: [{ type: 'stats', target: selected, quantity: 52 },
       { type: 'mutate', target: selected, race: 'random', rarity: 'rare' }] },
 ]
-export const implementedPersistent: PersistentDefinition[] = [
-  { id: 'dirty-bone-scraper', name: '脏污刮骨刀', triggers: [{ event: 'roundEnd',
-    effects: [{ type: 'stats', target: { mode: 'all', filter: { minQuantityExclusive: 275 } }, activity: 20 }] }] },
-  { id: 'contracted-claw', name: '挛缩指爪', triggers: [{ event: 'removeSucceeded', excludedEventRace: 'construct',
-    effects: [{ type: 'stats', target: { mode: 'random' }, quantity: 150 }] }] },
-  { id: 'aberrant-bud', name: '孽生肉芽', triggers: [{ event: 'mutationCompleted', eventRace: 'aberrant',
-    effects: [{ type: 'stats', target: all, activity: 35 }] }] },
-  { id: 'writhing-spinal', name: '蠕动脊髓', triggers: [{ event: 'addSucceeded',
-    effects: [{ type: 'chance', probability: .75, effects: [
-      { type: 'mutate', target: { mode: 'eventMonster' }, race: 'aberrant', activityBonus: 80 },
-    ] }] }] },
-  { id: 'hypertrophic-pituitary', name: '肿大脑垂体', triggers: [{ event: 'roundEnd',
-    condition: { filter: { race: 'awakened', rarities: ['rare', 'boss'] }, minGroups: 1 },
-    effects: [{ type: 'stats', target: { mode: 'random' }, activity: 80 }] }] },
-  { id: 'leather-restraint', name: '生皮革拘束带', triggers: [{ event: 'roundEnd',
-    condition: { filter: { rarities: ['magic'] }, minGroups: 3 },
-    effects: [{ type: 'stats', target: { mode: 'highest' }, quantity: 100 }] }] },
-  { id: 'clustered-insect-eggs', name: '簇生虫卵', triggers: [{ event: 'roundEnd',
-    condition: { filter: { race: 'swarm' }, minGroups: 3 },
-    effects: [{ type: 'add', count: 1, spec: { filter: { race: 'swarm' }, quantityBonus: 100 } }] }] },
-]
-
 export function createPlannerModel(overrides: Partial<PlannerModel> = {}): PlannerModel {
   const cards = candidateCards.filter(c => realCardCatalog.some(e => e.name === c.name))
     .map((c): CardDefinition => implementedCards.find(d => d.id === c.id) ?? {
@@ -92,19 +70,22 @@ export function createPlannerModel(overrides: Partial<PlannerModel> = {}): Plann
       id: p.id, name: p.name, triggers: [], unsupportedReason: p.modelWarning ?? '尚未迁移完整常驻规则',
     })
   return {
-    version: 'vorax-planner-v1', cards, persistent,
+    version: 'vorax-planner-v2-passives', cards, persistent,
     offerPool: cards.filter(c => {
       const source = realCardCatalog.find(e => e.name === c.name)!
       return source.category !== '特殊药剂'
     }).map(c => c.id),
     offerCount: 3, offersWithReplacement: false, poolLabel: '底表普通候选池（条件与全卡覆盖尚未完成，会阻止完整规划）',
     monsters: [], raritySamples: [], rarityPriors: {}, persistentOrder: 'acquisition', maxEvents: 1000,
+    pupaRepetitions: 'totalX',
     assumptions: [
       '每轮符合条件的卡牌等概率；默认同轮不放回、跨轮独立，重抽同轮替换候选且不结算常驻。',
       '随机合法目标及极值并列目标等概率；这些是假设，不是实测概率。',
       '卡牌全部效果完成后按事件 FIFO 结算常驻；条件读取处理事件时的局面。',
       '新增常驻下一轮生效；第11至13轮仍结算；暂未模拟培养中额外奖励常驻的出现时点。',
       '常驻获得顺序、同种群同稀有度的同类变异事件语义仍需实测；默认属性未变不触发变异事件。',
+      '人蛹默认总计X次（可切换额外X次）；周期按全局回合；吞噬按数量和单体活性分别相加，均需实战校准。',
+      '融合按数量与单体活性求和，不额外套用变异升阶经验；无指定种群的融合从显式目标稀有度字典抽取身份。',
       '最终期望依赖显式牌池、规则与后续近似策略；p10是模型分位数，不是真实保底。',
     ],
     ...overrides,

@@ -15,6 +15,19 @@ beforeEach(() => {
 })
 const native = (dictionary: string | null) => ({ directory: 'C:/stable/user-data', dictionary, workspace: null })
 
+it('validates optional passive model data while preserving legacy workspaces', async () => {
+  const { validateUserData, workspaceKey } = await import('./userData')
+  const { initialState } = await import('../data/sampleLibrary')
+  const workspace = { state: initialState, persistentIds: ['none'], candidateIds: [] }
+  expect(() => validateUserData(workspaceKey, JSON.stringify(workspace))).not.toThrow()
+  expect(() => validateUserData(workspaceKey, JSON.stringify({ ...workspace,
+    state: { ...initialState, persistentModel: { pupaRepetitions: 'invalid' } },
+  }))).toThrow()
+  expect(() => validateUserData(workspaceKey, JSON.stringify({ ...workspace,
+    state: { ...initialState, persistentAcquiredRounds: { 'human-pupa': -1 } },
+  }))).toThrow()
+})
+
 it('migrates the existing dictionary before App can write defaults', async () => {
   values.set(key, original)
   mocks.invoke.mockResolvedValueOnce(native(null)).mockResolvedValue(undefined)

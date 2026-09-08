@@ -73,7 +73,7 @@ it('allows negative round-end projections instead of clamping loss to zero', () 
 it('projects periodic new permanent on next round and reports incremental income only', () => {
   const source = board([m('1','construct',300)], 'activity', 1)
   const ranking = rankPersistentChoices(source, [p('plague-madonna')], [p('dirty-bone-scraper')])
-  expect(ranking[0].nextRoundEndBonus).toBe(8)
+  expect(ranking[0].modelUnavailable).toContain('变异样本')
   expect(rankPersistentChoices({ ...source, round:2 }, [p('plague-madonna')], [p('dirty-bone-scraper')])[0].nextRoundEndBonus).toBe(0)
   expect(rankPersistentChoices(source, [p('dirty-bone-scraper')], [p('dirty-bone-scraper')])[0].scoreDelta).toBe(0)
   expect(source.round).toBe(1)
@@ -103,18 +103,17 @@ it('does not grant an unverified removal bonus after deleting its race threshold
   const result = evaluateCard(source, potion([{ type:'removeRace',target:'selected' }]),
     p('adhesive-metatarsal'), { selectedMonsterIds:['1'] })
   expect(result.activityAfter).toBe(200)
-  expect(result.warnings.join()).toContain('移除跨越常驻门槛')
+  expect(result.warnings.join()).toContain('条件在事件处理时判定')
 })
 
-it('enumerates pupa/scraper ordering at the 275 threshold without assuming which triggers first', () => {
+it('resolves pupa/scraper in the configured order at the 275 threshold', () => {
   const source = board([m('1','swarm',270,10)])
   const saved = structuredClone(source)
   const loadout = [p('human-pupa'), p('dirty-bone-scraper')]
   const result = evaluateRoundEndTransition(source,loadout)
-  expect(result.activityBonus).toBe(80)
-  expect(result.analysis.join()).toContain('+80–+5880')
-  expect(result.analysis.join()).toContain('两种结算顺序')
-  expect(evaluateRoundEndTransition(source,[...loadout].reverse())).toEqual(result)
+  expect(result.activityBonus).toBe(5640)
+  expect(result.analysis.join()).toContain('列表顺序')
+  expect(evaluateRoundEndTransition(source,[...loadout].reverse()).activityBonus).toBe(80)
   expect(source).toEqual(saved)
 })
 
@@ -122,5 +121,5 @@ it('includes cross-product income instead of adding independent pupa and scraper
   const source = board([m('1','swarm',280,1),m('2','swarm',280,2),m('3','construct',280,3)])
   const result = evaluateRoundEndTransition(source,[p('human-pupa'),p('dirty-bone-scraper')])
   expect(result.activityBonus).toBe(17488)
-  expect(result.analysis.join()).toContain('+17488–+17880')
+  expect(result.analysis.join()).toContain('17488–17520')
 })

@@ -21,6 +21,10 @@ export function RedrawStrip({
   recommended,
   onReroll,
 }: RedrawStripProps) {
+  if (estimate3.unavailable) return <section className="redraw-section">
+    <h2>重抽决策暂不可用</h2><p>{estimate3.unavailable}</p>
+    <button type="button" disabled={rerollsRemaining <= 0} onClick={onReroll}>手动洗牌（剩余 {rerollsRemaining} 次）</button>
+  </section>
   return (
     <section className="redraw-section">
       <div className="section-heading">

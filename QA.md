@@ -1,5 +1,17 @@
 # 界面与交互验收
 
+## 2026-09-08 特殊药剂校准
+
+419测试（本轮新增31项）、TypeScript/Vite、CLI coverage33药剂/24常驻和demo通过。Playwright/Edge，Browser plugin not available，http://127.0.0.1:5175/，1440×1000、390×844：3→4候选切换、空心茧身份确认后虫母重算、专属基础值非法JSON拒绝/合成JSON导入、刷新保存、实际怪物不被预览修改；页面身份/非空/无错误遮罩/无控制台错误/无横向溢出通过，截图已检查。临时脚本/截图：仓库外work/special-potions-qa.cjs及special-potions-{desktop,mobile}.png。未验真实四卡OCR/鼠标关联/原生新包；未知基础值、病躯满槽、虫母自身计数/取整与发牌权重详见 SPECIAL_POTION_CALIBRATION.md。未安装/推送。
+
+## 2026-09-08 七张常规药剂校准
+
+388测试（新增23项）、TypeScript/Vite构建、CLI coverage25药剂/24常驻和demo通过。随机融合的实际历史记录仍可复现。Playwright/Edge，Browser plugin not available：1440×1000、390×844，缺数据拦截/错误JSON拒绝/4档合成基础值导入并重算/双目标融合/刷新保留/真实局面不变/无控制台错误或遮罩/无横向溢出。入口 http://127.0.0.1:5175，临时脚本外层work/potions-qa.cjs。未验证真实OCR/原生安装；未安装或推送。详见 POTION_CALIBRATION.md。
+
+## 2026-09-08 常驻 24 张共用引擎
+
+365 项 Vitest、TypeScript/Vite 构建；Planner coverage 24/24 常驻、demo 完成。逐卡、跨门槛、满槽失败、融合/吞噬连锁、延迟、首领、未知数据拦截均有测试。Playwright/Edge：1440×1000 参数及 JSON 导入/刷新、460×680 模拟 IPC 浮窗、390×844 无横向溢出；无 pageerror、console error 或 Vite overlay。Browser plugin not available，使用本机独立浏览器上下文。脚本和截图在外层 work/passives-qa.cjs、passives-{desktop,floating,mobile}.png，不在 Git 项目中。未测试真实游戏 OCR 或原生安装包，本轮未安装。见 PERMANENT_COVERAGE.md。
+
 ## 2026-09-08 自动记录版安装验收
 
 319项测试及构建重跑通过；无运行客户端，安全升级脚本exit0，所有原存档/旧缓存文件哈希保持不变，12条名字保留。已安装EXE与release产物逐字节仅NSIS bundle标记NSS/UNK三字节不同，其余内容相同。备份和哈希见CODEX_HANDOFF顶部。未启动GUI或服务，真实游戏F8和原生记录落盘/重启读取仍待用户验收。

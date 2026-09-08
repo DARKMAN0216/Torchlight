@@ -26,6 +26,8 @@ export interface PlannerState {
   offeredCardIds: string[]
   redrawsRemaining: number
   specialPotionStage: number
+  /** Special candidates for this offer only; another choice ends the chain. */
+  specialOffer?: SpecialOffer
   nextInstanceId: number
   recognitionReview: string[]
 }
@@ -48,6 +50,7 @@ export interface Filter {
   excludeRace?: RaceId
   rarities?: RarityId[]
   minQuantityExclusive?: number
+  minActivityExclusive?: number
 }
 export interface TargetRule {
   mode: 'choose' | 'random'
@@ -60,7 +63,7 @@ export type Selector =
   | { mode: 'selected' }
   | { mode: 'eventMonster' }
   | { mode: 'all' | 'random' | 'highest' | 'lowest'; filter?: Filter }
-export interface Condition { filter: Filter; minGroups: number }
+export interface Condition { filter: Filter; minGroups: number; maxGroups?: number; all?: Condition[] }
 export type MonsterBase = Omit<Monster, 'instanceId'>
 export interface GenerationSpec {
   filter?: Filter
@@ -69,16 +72,23 @@ export interface GenerationSpec {
   activityBonus?: number
 }
 export type Effect = (
+  | { type: 'specialPotion'; kind: 'cocoon' | 'copy1' | 'copy2' | 'copy3' | 'mother' | 'communion' | 'disease' | 'skeleton' }
+  | { type: 'confirmedPotion'; kind: 'twinSwarm' | 'eggshell' | 'viscousBile' | 'swarmFusion' | 'xeno' | 'insectLure' | 'oviposition' }
   | { type: 'stats'; target: Selector; quantity?: number; activity?: number; activityFactor?: number
       repeatPerRace?: RaceId; awakenedRarityRepeat?: boolean }
   | { type: 'remove'; target: Selector }
   | { type: 'removeNeighbor'; offset: -1 | 1 }
   | { type: 'add'; count: number; spec: GenerationSpec }
   | { type: 'mutate'; target: Selector; race?: RaceId | 'random'; rarity?: RarityId; upgradeSteps?: number
-      onlyIfDifferentRace?: boolean; activityBonus?: number }
+      onlyIfDifferentRace?: boolean; activityBonus?: number; randomIdentity?: boolean }
   | { type: 'fuse'; race: RaceId; rarity?: RarityId }
   | { type: 'chance'; probability: number; effects: Effect[] }
   | { type: 'ifSelected'; filter: Filter; effects: Effect[] }
+  | { type: 'pupaGrowth' }
+  | { type: 'fuseMatching'; count: 2 | 3; filter: Filter; sameRarity?: boolean; race?: RaceId; rarity?: RarityId; upgradeSteps?: number; repeat?: boolean }
+  | { type: 'devour'; victim: Selector; recipient: Selector }
+  | { type: 'upgradeEachRarity' }
+  | { type: 'randomizeAll' }
 ) & { condition?: Condition }
 export interface CardDefinition {
   id: string
@@ -87,8 +97,16 @@ export interface CardDefinition {
   effects: Effect[]
   eligibility?: { minRound?: number; maxRound?: number; stage?: number; condition?: Condition }
   nextStage?: number
+  specialOffer?: SpecialOffer
   acquirePersistentId?: string
   unsupportedReason?: string
+}
+export interface SpecialOffer {
+  mode: 'additional' | 'replace'
+  count: number
+  poolId: string
+  /** Qualitative observation, never a numeric probability. */
+  likelyCardName?: string
 }
 export interface PersistentDefinition {
   id: string
@@ -116,6 +134,12 @@ export interface RarityTransitionSample {
   afterUnitActivity: number
 }
 export interface PlannerModel {
+  /** Special identities never borrow ordinary boss bases. */
+  specialBases?: { hollowCocoon?: { quantity: number; unitActivity: number } }
+  /** Explicit scenario weights, not inferred from high probability. */
+  specialOfferPools?: Record<string, Array<{ cardId: string; weight: number }>>
+  /** User-confirmed fresh-spawn stats by rarity; NOT empirical mutation priors. */
+  rarityBases?: Partial<Record<RarityId, { quantity: number; unitActivity: number }>>
   version: string
   cards: CardDefinition[]
   persistent: PersistentDefinition[]
@@ -131,11 +155,17 @@ export interface PlannerModel {
   persistentOrder: 'acquisition' | 'reverse' | 'random'
   assumptions: string[]
   maxEvents: number
+  /** Card wording ambiguity is explicit and versioned, never inferred from one outcome. */
+  pupaRepetitions?: 'totalX' | 'additionalX'
 }
 export interface SimulationResult {
   state: PlannerState
   events: GameEvent[]
   warnings: string[]
+}
+export interface PassiveObservations {
+  targetSlotIds?: Partial<Record<string, string[]>>
+  mutatedAdditionSlotIds?: Partial<Record<string, string[]>>
 }
 export class ModelUnavailableError extends Error {
   constructor(message: string) { super(message); this.name = 'ModelUnavailableError' }

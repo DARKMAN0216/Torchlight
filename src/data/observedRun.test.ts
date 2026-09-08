@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { evaluateCard, totalActivity } from '../engine/evaluate'
 import { candidateCards, persistentCards } from './sampleLibrary'
+import { confirmedPotions } from '../planner/confirmedPotions'
+import { previewPassives } from '../engine/sharedPassives'
 import {
   observedPersistentOffers,
   observedPersistentSelections,
@@ -23,6 +25,19 @@ describe('observed gameplay run', () => {
         (item) => step.persistentCardIds.includes(item.id),
       )
       const result = evaluateCard(step.before, card, persistent, step.context)
+
+      if (card.confirmedPotion) {
+        // A recorded outcome must remain a possible outcome, not the only one.
+        const phase = { card: confirmedPotions.find(c=>c.id===card.id)!,
+          targets: step.context.selectedMonsterIds ?? [], includeRoundEnd: false }
+        const preview = previewPassives(step.before, persistent, [], {}, {}, phase)
+        expect(preview.exhaustive, step.id).toBe(true)
+        expect(preview.outcomes.some(o=>JSON.stringify(o.state.monsters)===JSON.stringify(step.afterPotion!.monsters)), step.id).toBe(true)
+        const final = previewPassives(step.before, persistent, [], {}, {}, { ...phase, includeRoundEnd: true })
+        expect(final.outcomes.some(o=>JSON.stringify(o.state.monsters)===JSON.stringify(step.after.monsters)), step.id).toBe(true)
+        expect(result.state, step.id).toEqual(step.before)
+        continue
+      }
 
       if (!step.roundEndPersistentCardId) {
         expect(result.state.monsters, step.id).toEqual(step.after.monsters)

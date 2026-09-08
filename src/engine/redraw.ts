@@ -38,7 +38,14 @@ export function estimateRedraw(
     }
   }
 
-  const sortedScores = rankCards(state, evaluablePool, persistent)
+  const ranking = rankCards(state, evaluablePool, persistent)
+  const missing = ranking.find(result => result.modelUnavailable)
+  if (missing) return {
+    drawCount, expectedBest: currentBest, expectedDelta: 0, improveProbability: 0,
+    minimumBest: currentBest, maximumBest: currentBest, sampleCount: 0,
+    unavailable: `重抽卡池缺少结算数据：${missing.modelUnavailable}；暂不估算洗牌收益。`,
+  }
+  const sortedScores = ranking
     .map((result) => result.score)
     .sort((left, right) => left - right)
   const sampleCount = binomial(sortedScores.length, actualCount)

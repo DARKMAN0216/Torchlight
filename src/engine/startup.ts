@@ -26,6 +26,7 @@ export function startupNeed(state: GameState, loadout: PersistentLoadout) {
 }
 
 export function withStartup(state: GameState, loadout: PersistentLoadout, result: EvaluationResult): EvaluationResult {
+  if (result.modelUnavailable || result.sampledOutcomes) return { ...result, startup: undefined }
   const need = startupNeed(state, loadout)
   if (!need) return result
   const range = result.raceGroupRange?.[need.race] ?? {

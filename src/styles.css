@@ -672,6 +672,7 @@ select {
   padding: 14px 12px 2px;
 }
 .candidate-grid.count-5 { grid-template-columns: repeat(5, minmax(112px, 1fr)); }
+.candidate-grid.count-4 { grid-template-columns: repeat(4, minmax(112px, 1fr)); }
 .candidate-grid.count-3 { grid-template-columns: repeat(3, minmax(170px, 1fr)); }
 
 .candidate-card {
@@ -904,7 +905,7 @@ button.redraw-option:hover { border-color: #7d6335; background: #211d17; }
   .app-bar nav { overflow-x: auto; }
   .app-bar nav button { min-height: 42px; flex: 1 0 auto; justify-content: center; border-top: 1px solid var(--border); }
   .app-grid { display: flex; flex-direction: column; padding: 8px; }
-  .candidate-grid.count-5, .candidate-grid.count-3 { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
+  .candidate-grid.count-5, .candidate-grid.count-4, .candidate-grid.count-3 { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
   .candidate-card { min-height: 330px; }
   .recommendation-panel { display: block; }
   .redraw-options { grid-template-columns: 1fr; }
@@ -929,7 +930,7 @@ button.redraw-option:hover { border-color: #7d6335; background: #211d17; }
     border-bottom: 1px solid var(--border-soft);
     font-size: 11px;
   }
-  .candidate-grid.count-5, .candidate-grid.count-3 { grid-template-columns: 1fr; }
+  .candidate-grid.count-5, .candidate-grid.count-4, .candidate-grid.count-3 { grid-template-columns: 1fr; }
   .candidate-card { min-height: 310px; }
   .field-row { grid-template-columns: 1fr; }
   .observed-race-fields,
@@ -1000,6 +1001,19 @@ button.redraw-option:hover { border-color: #7d6335; background: #211d17; }
   line-height: 1.5;
 }
 .newborn-settings { min-width: 0; display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid #6e613f; padding: 12px; }
+.settings-banner { flex-wrap: wrap; align-items: flex-start; gap: 16px; }
+.settings-banner > strong { flex-basis: 100%; }
+.settings-banner > .newborn-settings, .settings-banner > .persistent-model-settings { flex: 1 1 380px; max-width: 100%; }
+.settings-banner > span { flex: 1 1 260px; min-width: 0; }
+.settings-banner > button { flex: 0 0 auto; white-space: nowrap; }
+.persistent-model-settings { min-width: 0; padding: 12px; border: 1px solid #6e613f; }
+.persistent-model-settings h3 { margin-top: 0; }
+.persistent-model-settings label { display: grid; gap: 5px; margin-block: 10px; }
+.persistent-model-settings input, .persistent-model-settings select { width: 100%; min-width: 0; }
+@media (max-width: 700px) {
+  .settings-banner > .newborn-settings, .settings-banner > .persistent-model-settings,
+  .settings-banner > span { flex-basis: auto; width: 100%; box-sizing: border-box; }
+}
 .newborn-settings p { flex-basis: 100%; margin: 0; }
 .newborn-settings label { display: grid; gap: 4px; max-width: 100%; }
 .newborn-settings input, .newborn-settings select { width: 180px; max-width: 100%; color: #eee; background: #20292c; border: 1px solid #60686c; padding: 6px; }

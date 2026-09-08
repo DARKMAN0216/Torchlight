@@ -6,6 +6,8 @@ import type {
   RarityId,
 } from '../types/game'
 import { realCardCatalog } from './realCardCatalog'
+import { implementedPersistent } from '../planner/persistentCatalog'
+import { confirmedPotions } from '../planner/confirmedPotions'
 
 export const raceLabels: Record<RaceId, string> = {
   awakened: '觉醒者',
@@ -21,7 +23,7 @@ export const rarityLabels: Record<RarityId, string> = {
   boss: '首领',
 }
 
-export const persistentCards: PersistentCard[] = [
+const legacyPersistentCards: PersistentCard[] = [
   {
     id: 'none',
     name: '无常驻加成',
@@ -384,6 +386,17 @@ export const persistentCards: PersistentCard[] = [
       }],
     },
   },
+]
+
+export const persistentCards: PersistentCard[] = [
+  ...legacyPersistentCards.filter(p => p.id === 'none' || p.name.includes('示例')),
+  ...implementedPersistent.map((rule): PersistentCard => {
+    const existing = legacyPersistentCards.find(p => p.id === rule.id)
+    const text = realCardCatalog.find(p => p.category === '手术用具' && p.name === rule.name)
+    return { ...existing, id: rule.id, name: rule.name, description: text?.effectText ?? existing?.description ?? rule.name,
+      sharedRules: true,
+      modelWarning: '按卡面规则与显式模型计算；随机结果使用后请按 F8 同步，未确认的生成/升阶数值需补充数据。' }
+  }),
 ]
 
 const baseCandidateCards: CandidateCard[] = [
@@ -997,7 +1010,7 @@ const knownModels = [...baseCandidateCards, ...addedModels].map((card): Candidat
 })
 // Catalog coverage is separate from numeric coverage. Never silently turn an
 // unimplemented card into a zero-effect card or drop a recognized new candidate.
-export const candidateCards: CandidateCard[] = [
+const cataloguedCandidates: CandidateCard[] = [
   ...knownModels,
   ...realCardCatalog.filter(entry => entry.category !== '手术用具' && !knownModels.some(card => card.name === entry.name))
     .map((entry): CandidateCard => ({
@@ -1015,6 +1028,25 @@ export const candidateCards: CandidateCard[] = [
           : '已收录原文；目标规则或复合效果尚未完整建模，禁止当作零收益或套用相似牌效果。',
     })),
 ]
+
+export const candidateCards: CandidateCard[] = cataloguedCandidates.map(card => {
+  const rule = confirmedPotions.find(item => item.id === card.id)
+  if (!rule) return card
+  return { ...card, confirmedPotion: true, projection: undefined, effects: [],
+    evaluationUnavailable: false, requiresNewbornSwarm: false, requiresScreenSync: true,
+    resolutionObservation: undefined, rankObservedRandom: undefined,
+    description: rule.name === '蜕生皮溶液'
+      ? '必须选择2组怪物，融合为1组随机稀有度蛊虫；数量与单体活性分别相加。'
+      : rule.name === '解剖浸液：病躯'
+        ? '有空位获得1组首领骨卫兵；满槽将总活性最高者变异/升级为首领骨卫兵，基础数量和活性增加（增量待确认）；下一轮额外发放1支特殊药剂。'
+      : realCardCatalog.find(entry => entry.name === card.name)?.effectText ?? card.description,
+    targeting: rule.targeting?.mode === 'choose' ? {
+      mode: 'choose', minTargets: rule.targeting.min, maxTargets: rule.targeting.max,
+      prompt: `选择${rule.targeting.min === rule.targeting.max ? rule.targeting.min : `${rule.targeting.min}–${rule.targeting.max}`}组；游戏使用后F8同步`,
+    } : undefined,
+    modelCoverage: 'partial', modelWarning: '2026-09-08用户校准机制；出生/专属基础值、随机出率及规则边界见计算说明，缺失数据不作完整推荐。',
+    tags: ['真实卡牌', '用户确认机制', '分支预览', 'F8同步'] }
+})
 
 export const initialState: GameState = {
   round: 3,

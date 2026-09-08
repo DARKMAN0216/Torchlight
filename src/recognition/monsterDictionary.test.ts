@@ -7,8 +7,9 @@ import type { RecognitionSnapshot, RecognizedMonsterSlot } from './contracts'
 const slot = (name = '寄生蝴蝶'): RecognizedMonsterSlot => ({ slotId: 'slot-1', occupied: {value:true,confidence:1}, name:{value:name,confidence:.99} })
 afterEach(() => { vi.unstubAllGlobals() })
 describe('monster name dictionary', () => {
-  it('contains all eleven user mappings with multiple names per attribute pair', () => {
-    expect(builtinMonsterNames).toHaveLength(11)
+  it('contains twelve user mappings including the special cocoon', () => {
+    expect(builtinMonsterNames).toHaveLength(12)
+    expect(monsterDictionary().get('空心茧')).toEqual({ name: '空心茧', race: 'swarm', rarity: 'boss' })
     const dictionary = monsterDictionary()
     expect(dictionary.get('堕落者')).toMatchObject({race:'awakened',rarity:'magic'})
     expect(dictionary.get('朝圣者')).toMatchObject({race:'awakened',rarity:'magic'})

@@ -177,6 +177,7 @@ export function projectPotion(source: GameState, card: CandidateCard, loadout: P
   const minimum = Math.min(...outcomes.map(r => r.activityAfter))
   const maximum = Math.max(...outcomes.map(r => r.activityAfter))
   return { ...outcomes[0], card, scoreLabel: `保守${outcomes[0].scoreLabel}`,
+    modelUnavailable: outcomes.find(r=>r.modelUnavailable)?.modelUnavailable,
     raceGroupRange: raceRanges(outcomes),
     activityRange: { minimum, maximum },
     trace: [`已计算${outcomes.length}个分支端点；总活性范围 ${minimum}–${maximum}，不是确定结算结果。`, ...notes,

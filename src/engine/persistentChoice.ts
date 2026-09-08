@@ -4,6 +4,7 @@ import { persistentCardsIn } from './persistent'
 import { evaluateStrategicState } from './strategy'
 
 export interface PersistentChoiceEvaluation {
+  modelUnavailable?: string
   card: PersistentCard
   score: number
   scoreDelta: number
@@ -12,6 +13,7 @@ export interface PersistentChoiceEvaluation {
 }
 
 function strategicScore(state: GameState, loadout: PersistentLoadout): {
+  unavailable?: string
   score: number
   roundEndBonus: number
   analysis: string[]
@@ -19,6 +21,7 @@ function strategicScore(state: GameState, loadout: PersistentLoadout): {
   const strategic = evaluateStrategicState(state, loadout)
   const transition = evaluateRoundEndTransition(state, loadout)
   return {
+    unavailable: transition.unavailable,
     score: strategic.value + transition.bonus,
     roundEndBonus: transition.bonus,
     analysis: [...strategic.analysis, ...transition.analysis],
@@ -39,6 +42,7 @@ export function rankPersistentChoices(
       const after = strategicScore(nextRound, currentCards.some(item => item.id === card.id)
         ? currentCards : [...currentCards, card])
       return {
+        modelUnavailable: before.unavailable || after.unavailable,
         card,
         score: after.score,
         scoreDelta: after.score - before.score,
@@ -50,6 +54,6 @@ export function rankPersistentChoices(
       }
     })
     .sort((left, right) =>
-      right.score - left.score || right.nextRoundEndBonus - left.nextRoundEndBonus,
+      Number(Boolean(left.modelUnavailable)) - Number(Boolean(right.modelUnavailable)) || right.score - left.score || right.nextRoundEndBonus - left.nextRoundEndBonus,
     )
 }

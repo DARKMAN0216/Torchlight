@@ -113,10 +113,10 @@ describe('real catalog migration coverage', () => {
     for (const definition of implementedCards)
       expect(candidateCards.find(c => c.id === definition.id)?.name).toBe(definition.name)
     expect(new Set(m.cards.map(c => c.id)).size).toBe(m.cards.length)
-    expect(modelCoverage(m).cards.filter(c => c.status === 'implemented')).toHaveLength(19)
+    expect(modelCoverage(m).cards.filter(c => c.status === 'implemented')).toHaveLength(33)
     expect(modelCoverage(m).persistent.filter(c => c.status === 'implemented')).toHaveLength(implementedPersistent.length)
     expect(m.monsters).toEqual([]) // old 15×12 defaults are not silently reused.
-    expect(m.persistent.find(p => p.id === 'human-pupa')?.unsupportedReason).toBeTruthy()
+    expect(m.persistent.find(p => p.id === 'human-pupa')?.triggers[0].effects).toEqual([{type:'pupaGrowth'}])
     expect(m.cards.find(c => c.id === 'large-potion-box')?.unsupportedReason).toBeTruthy()
   })
 })

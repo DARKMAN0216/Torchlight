@@ -7,6 +7,12 @@ export function PersistentRecommendation({ offers, ranking }: {
 }) {
   const best = ranking[0]
   const missing = offers.filter((offer) => !offer.cardId)
+  const blocked = ranking.filter(item => item.modelUnavailable)
+  if (blocked.length) return <div className="floating-recommendation">
+    <strong>常驻已入库，结算需要补充数据</strong>
+    {blocked.map(item => <p key={item.card.id}>{item.card.name}：{item.modelUnavailable}</p>)}
+    <p>补齐生成或升阶参数后再比较；可以在游戏选择后按 F8 同步。</p>
+  </div>
   const tied = best ? ranking.filter((item) => item.score === best.score && item.nextRoundEndBonus === best.nextRoundEndBonus) : []
   return (
     <div className="floating-recommendation">

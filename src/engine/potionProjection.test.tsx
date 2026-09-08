@@ -25,21 +25,22 @@ describe('potion ranges', () => {
   })
   it('egg requires explicit baseline, handles empty/full boards, and respects six slots', () => {
     const egg=card('active-oviposition-hormone')
-    expect(rankCards(state('swarm'),[egg],[])).toEqual([])
-    expect(()=>evaluateCard(state('swarm'),egg,[])).toThrow('基础参数')
-    const s={...state(),newbornSwarm:{quantity:36,unitActivity:1,rarity:'common' as const}}
+    expect(rankCards(state('swarm'),[egg],[])[0].modelUnavailable).toContain('rarityBases')
+    expect(evaluateCard(state('swarm'),egg,[]).modelUnavailable).toContain('rarityBases')
+    const rarityBases={common:{quantity:36,unitActivity:1},magic:{quantity:36,unitActivity:1},rare:{quantity:36,unitActivity:1},boss:{quantity:36,unitActivity:1}}
+    const s={...state(),persistentModel:{rarityBases}}
     expect(project('active-oviposition-hormone',s).activityRange).toEqual({minimum:36,maximum:108})
-    const full={...state('swarm','swarm','swarm','swarm','swarm','swarm'),newbornSwarm:s.newbornSwarm}
+    const full={...state('swarm','swarm','swarm','swarm','swarm','swarm')}
     expect(project('active-oviposition-hormone',full).activityRange).toEqual({minimum:6000,maximum:6000})
     expect(project('active-oviposition-hormone',s).state.monsters).toHaveLength(6)
-    expect(rankCards({...s,newbornSwarm:{...s.newbornSwarm,quantity:NaN}},[egg],[])).toEqual([])
+    expect(rankCards({...state(),newbornSwarm:{rarity:'common',quantity:36,unitActivity:1}},[egg],[])[0].modelUnavailable).toContain('rarityBases')
   })
   it('egg enumerates actual on-add mutation outcomes and never multiplies its base as an additive gain', () => {
-    const s={...state(),newbornSwarm:{quantity:36,unitActivity:1,rarity:'common' as const}}
+    const s={...state(),persistentModel:{rarityBases:{common:{quantity:36,unitActivity:1},magic:{quantity:36,unitActivity:1},rare:{quantity:36,unitActivity:1},boss:{quantity:36,unitActivity:1}}}}
     const writhing=persistentCards.filter(c=>c.id==='writhing-spinal')
     expect(project('active-oviposition-hormone',s,writhing).activityRange).toEqual({minimum:36,maximum:8748})
-    expect(project('active-oviposition-hormone',s,persistentCards.filter(c=>c.id==='raging-blood')).activityRange)
-      .toEqual({minimum:36,maximum:108})
+    expect(project('active-oviposition-hormone',s,persistentCards.filter(c=>c.id==='raging-blood')).modelUnavailable)
+      .toContain('旧示例效果')
   })
   it('matches all 60 potion names and the three reported names', () => {
     const potions=realCardCatalog.filter(c=>c.category!=='手术用具')

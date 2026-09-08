@@ -70,7 +70,8 @@ export function StatePanel({
     onStateChange({
       ...state,
       monsters: state.monsters.map((monster) =>
-        monster.id === id ? { ...monster, ...changes } : monster,
+        monster.id === id ? { ...monster,
+          ...(('race' in changes || 'rarity' in changes) ? { specialIdentity: undefined } : {}), ...changes } : monster,
       ),
     })
   }
@@ -409,6 +410,11 @@ export function StatePanel({
                     <option value={rarity} key={rarity}>{rarityLabels[rarity]}</option>
                   ))}
                 </select>
+                {monster.race === 'swarm' && monster.rarity === 'boss' && <select
+                  aria-label={`槽位 ${index + 1} 特殊身份`} value={monster.specialIdentity ?? 'unknown'}
+                  onChange={e => updateMonster(monster.id, { specialIdentity: e.target.value as MonsterGroup['specialIdentity'] })}>
+                  <option value="unknown">身份待确认</option><option value="hollow-cocoon">空心茧</option><option value="ordinary">非空心茧</option>
+                </select>}
               </div>
               <div role="cell">
                 <NumberField

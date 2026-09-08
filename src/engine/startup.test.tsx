@@ -20,7 +20,7 @@ const boost: CandidateCard = {id:'boost',name:'仅即时加成',rarity:1,descrip
 it('reproduces screenshot: mutagen is not zero, picks two targets and reveals the dormant pupa route', () => {
   const source=board(), original=structuredClone(source)
   const ranking=rankCards(source,[gray,mutagen,xeno],pupa)
-  expect(ranking.map(r=>r.card.id)).toEqual([mutagen.id,gray.id])
+  expect(ranking.filter(r=>!r.modelUnavailable).map(r=>r.card.id)).toEqual([mutagen.id,gray.id])
   expect(ranking[0].delta).toBe(1040)
   expect(ranking[0].recommendedTargetIds).toEqual(['slot-1','slot-3'])
   expect(ranking[0].startup).toMatchObject({minimumGroups:0,maximumGroups:2,safeForPriority:true})
@@ -28,7 +28,7 @@ it('reproduces screenshot: mutagen is not zero, picks two targets and reveals th
   expect(ranking[0].trace.join(' ')).toContain('16个分支')
   expect(ranking[0].card.requiresScreenSync).toBe(true)
   expect(source).toEqual(original)
-  expect(ranking.some(r=>r.card.id===xeno.id)).toBe(false)
+  expect(ranking.find(r=>r.card.id===xeno.id)?.modelUnavailable).toContain('rarityBases')
 })
 
 it('gray can acquire swarm, but its second aberrant conversion prevents a guaranteed startup', () => {
@@ -78,7 +78,7 @@ it('does not promote a route that sacrifices more activity than it produces', ()
 })
 
 it('replacement remains exploratory: choose smallest removal, capacity-limited opportunities, no made-up new stats', () => {
-  expect(xeno.evaluationUnavailable).toBe(true)
+  expect(xeno.confirmedPotion).toBe(true)
   expect(replacementExploration(board(),xeno,'swarm')).toEqual({ids:['slot-1'],opportunities:4,removedActivity:120,removesAnchor:false})
   const full=board(); for(let i=3;i<6;i++) full.monsters[i]={...full.monsters[0],id:`slot-${i+1}`}
   expect(replacementExploration(full,xeno,'swarm')?.opportunities).toBe(1)
@@ -101,7 +101,8 @@ it('an on-add mutation can erase a new swarm: do not claim guaranteed startup fr
 
 it('still exposes unknown exploration when no potion can be numerically ranked', () => {
   const state=board(), ranking=rankCards(state,[xeno],pupa)
-  expect(ranking).toEqual([])
+  expect(ranking).toHaveLength(1)
+  expect(ranking[0].modelUnavailable).toContain('rarityBases')
   const html=renderToStaticMarkup(<StartupAdvice state={state} loadout={pupa} cards={[xeno]} ranking={ranking} compact />)
   expect(html).toContain('探索备选');expect(html).toContain('异种激素')
   expect(html).not.toContain('启动路线首选')

@@ -2,6 +2,7 @@ import type { GameState as LegacyState } from '../types/game'
 import type { RecognitionSnapshot } from '../recognition/contracts'
 import { cloneState, finalActivity, validateState } from './simulator'
 import type { SearchReport } from './search'
+import { cocoonId } from './specialPotions'
 import { ModelUnavailableError, type GameAction, type PersistentRuntimeState, type PlannerState, type RarityTransitionSample } from './types'
 
 export function fromLegacyState(
@@ -14,7 +15,8 @@ export function fromLegacyState(
   const state: PlannerState = {
     round: legacy.round, totalRounds: 13, decisionRounds: 10, maxGroups: 6,
     slots: legacy.monsters.map(m => ({ slotId: m.id, monster: m.race ? {
-      instanceId: 'observed-' + m.id, monsterId: metadata.monsterIdsBySlot?.[m.id] ?? 'unresolved:' + m.race + ':' + m.rarity,
+      instanceId: 'observed-' + m.id, monsterId: metadata.monsterIdsBySlot?.[m.id]
+        ?? (m.specialIdentity === 'hollow-cocoon' ? cocoonId : `${m.specialIdentity === 'ordinary' ? 'class' : 'unresolved'}:${m.race}:${m.rarity}`),
       race: m.race, rarity: m.rarity, quantity: m.quantity, unitActivity: m.unitActivity,
     } : null })),
     persistentEffects: structuredClone(metadata.persistentEffects), offeredCardIds: [...metadata.offeredCardIds],
@@ -57,8 +59,9 @@ export function fromRecognitionSnapshot(
     const rarity = required(observed.rarity, '稀有度')
     const quantity = required(observed.quantity, '数量')
     const unitActivity = required(observed.unitActivity, '单位活性')
-    const monsterId = observed.name && observed.name.confidence >= minimumConfidence
+    let monsterId = observed.name && observed.name.confidence >= minimumConfidence
       ? observed.name.value.normalize('NFKC').replace(/\s+/g, '') : 'unresolved:' + race + ':' + rarity
+    if (monsterId === '空心茧') monsterId = cocoonId
     if (observed.displayedTotalActivity && required(observed.displayedTotalActivity, '组总活性') !== quantity * unitActivity)
       throw new ModelUnavailableError('组总活性校验失败')
     return { slotId: previous.slotId, monster: {

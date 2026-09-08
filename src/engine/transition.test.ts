@@ -11,7 +11,13 @@ function stateWith(groups: GameState['monsters'], round = 2): GameState {
     quantity: 0,
     unitActivity: 0,
   }))
-  return { round, mode: 'strategic', monsters: [...groups, ...emptySlots] }
+  return { round, mode: 'strategic', monsters: [...groups, ...emptySlots], persistentModel: {
+    monsters: [{ monsterId:'test-fusion-construct',race:'construct',rarity:'magic',quantity:12,unitActivity:15 }],
+    raritySamples: (['common','magic','rare'] as const).map((rarity,i) => ({
+      id:`test-${i}`,cardId:'plague-madonna',beforeMonsterId:'before',afterMonsterId:'after',fromRarity:rarity,
+      toRarity:(['magic','rare','boss'] as const)[i],beforeQuantity:10,afterQuantity:10,beforeUnitActivity:10,afterUnitActivity:10,
+    })),
+  } }
 }
 
 describe('round-end transition value', () => {
@@ -26,9 +32,8 @@ describe('round-end transition value', () => {
     const projection = evaluateRoundEndTransition(state, persistent)
 
     expect(projection.bonus).toBe(570)
-    expect(projection.analysis).toContain(
-      '转移结构：基础状态 343 → 889，释放 2 个槽位，期权价值 +24',
-    )
+    expect(projection.activityBonus).toBe(550)
+    expect(projection.unavailable).toBeUndefined()
   })
 
   it('adds the transition value when a candidate completes the fusion threshold', () => {
@@ -42,7 +47,7 @@ describe('round-end transition value', () => {
     const result = rankCards(state, [card], persistent)[0]
 
     expect(result.scoreDelta).toBe(2987)
-    expect(result.analysis.some((line) => line.startsWith('回合结束转移收益 +2304'))).toBe(true)
+    expect(result.analysis.join()).toContain('黑山羊肠缝线')
   })
 
   it('recognizes equivalent observed-random outcomes without guessing a target', () => {
@@ -55,7 +60,7 @@ describe('round-end transition value', () => {
     const projection = evaluateRoundEndTransition(state, persistent)
 
     expect(projection.bonus).toBe(310)
-    expect(projection.analysis[0]).toContain('随机目标的 1 种合法结果在当前模型下等价')
+    expect(projection.analysis.join()).toContain('枚举 1 个结果')
   })
 
   it('uses a conservative lower bound when random outcomes have different values', () => {
@@ -92,7 +97,7 @@ describe('round-end transition value', () => {
       { id: 'slot-1', race: 'construct', rarity: 'common', quantity: 2, unitActivity: 100 },
     ], 3)
 
-    expect(evaluateRoundEndTransition(state, persistent)).toEqual({ bonus: 0, analysis: [] })
+    expect(evaluateRoundEndTransition(state, persistent)).toMatchObject({ bonus: 0, activityBonus: 0 })
   })
 
   it('projects one upgrade from every occupied non-boss rarity on the due round', () => {
@@ -106,6 +111,6 @@ describe('round-end transition value', () => {
     const projection = evaluateRoundEndTransition(state, persistent)
 
     expect(projection.bonus).toBe(36)
-    expect(projection.analysis[0]).toContain('随机目标的 1 种合法结果在当前模型下等价')
+    expect(projection.analysis.join()).toContain('枚举 1 个结果')
   })
 })

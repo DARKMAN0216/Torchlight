@@ -22,7 +22,7 @@ it('previews pupa bounds without mutating state', () => {
   const before = structuredClone(source)
   const result = evaluateRoundEndTransition(source, persistent('human-pupa'))
   expect(result.bonus).toBe(480)
-  expect(result.analysis.join()).toContain('+480–+1200')
+  expect(result.analysis.join()).toContain('480–800')
   expect(source).toEqual(before)
 })
 
@@ -34,6 +34,6 @@ it('liver triggers on any actual mutation while threshold remains met, not same-
   const unchanged = evaluateCard(result.state, card, persistent('mottled-liver'), {selectedMonsterIds:['3']})
   expect(unchanged.state.monsters.map(item => item.unitActivity)).toEqual([21,21,21])
   const boundary = evaluateCard(source, card, persistent('mottled-liver'), {selectedMonsterIds:['1']})
-  expect(boundary.warnings.join()).toContain('跨越触发门槛')
+  expect(boundary.warnings.join()).toContain('条件在事件处理时判定')
   expect(boundary.state.monsters.map(item => item.unitActivity)).toEqual([1,1,1])
 })

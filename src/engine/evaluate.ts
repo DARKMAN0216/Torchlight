@@ -18,9 +18,12 @@ import { evaluateStrategicState } from './strategy'
 import { enumerateTargetSets } from './targeting'
 import { persistentCardsIn } from './persistent'
 import { projectPotion } from './potionProjection'
+import { evaluateConfirmedPotion } from './confirmedPotions'
 import { canEvaluateCard } from './cardAvailability'
 import { projectPupaScraper } from './pupaScraper'
 import { compareStartup, raceRanges, withStartup } from './startup'
+import { asPlannerMonster, previewPassives, usesSharedPassives, type PassivePreview } from './sharedPassives'
+import type { GameEvent } from '../planner/types'
 
 const futureEmptySlotValue = 12
 const baseGroupQuantity = 12
@@ -29,9 +32,14 @@ const baseGroupUnitActivity = 15
 interface ResolutionRuntime {
   removedGroups: MonsterGroup[]
   addedGroups: MonsterGroup[]
+  events: GameEvent[]
+  instances: Record<string, string>
+  nextInstance: number
 }
 
 export interface RoundEndTransitionProjection {
+  unavailable?: string
+  uncertain?: boolean
   bonus: number
   activityBonus?: number
   analysis: string[]
@@ -135,6 +143,7 @@ function gainMultiplier(persistent: PersistentLoadout, race: RaceId): number {
 }
 
 function clearGroup(group: MonsterGroup): void {
+  delete group.specialIdentity
   group.race = null
   group.rarity = 'common'
   group.quantity = 0
@@ -182,7 +191,7 @@ function addGroupToFirstEmptySlot(
   return { ...target }
 }
 
-function applyEffect(
+function applyEffectBody(
   state: GameState,
   effect: CardEffect,
   persistent: PersistentLoadout,
@@ -511,6 +520,7 @@ function applyEffect(
     if (effect.onlyIfDifferent && oldRace === nextRace) continue
     const beforeMutation = cloneState(state)
     target.race = nextRace
+    target.specialIdentity = 'ordinary'
     const persistentConversionBonus = persistentCardsIn(persistent).reduce(
       (sum, item) => sum + (item.conversionBonusPerUnit?.[nextRace] ?? 0),
       0,
@@ -524,7 +534,7 @@ function applyEffect(
         `${raceLabels[nextRace]}，额外获得 ${bonus} 活性`,
     )
     if (oldRace !== nextRace) {
-      for (const item of persistentCardsIn(persistent)) {
+      for (const item of persistentCardsIn(persistent).filter(p => !p.sharedRules)) {
         const trigger = item.onMutationActivityBonus
         if (!trigger || (trigger.toRace && trigger.toRace !== nextRace)) continue
         if (trigger.condition) {
@@ -540,6 +550,41 @@ function applyEffect(
   }
 }
 
+function applyEffect(
+  state: GameState, effect: CardEffect, persistent: PersistentLoadout, trace: string[], warnings: string[],
+  context: EvaluationContext, runtime: ResolutionRuntime,
+): void {
+  const before = cloneState(state)
+  const removedOffset = runtime.removedGroups.length
+  const addedOffset = runtime.addedGroups.length
+  applyEffectBody(state, effect, persistent, trace, warnings, context, runtime)
+  if (effect.type === 'withTargets') return // Nested primitive effects already recorded their events.
+  const removed = runtime.removedGroups.slice(removedOffset)
+  const added = runtime.addedGroups.slice(addedOffset)
+  for (const m of removed) runtime.events.push({ type: 'removeSucceeded', source: 'potion', round: state.round,
+    slotId: m.id, before: asPlannerMonster(m, runtime.instances[m.id]) })
+  for (const m of added) {
+    runtime.instances[m.id] = `potion-added-${runtime.nextInstance++}`
+    runtime.events.push({ type: 'addSucceeded', source: 'potion', round: state.round,
+      slotId: m.id, after: asPlannerMonster(m, runtime.instances[m.id]) })
+  }
+  if (conditionMatches(before, effect.condition)) {
+    const attempts = effect.type === 'addGroup' ? effect.count ?? 1
+      : effect.type === 'addObservedGroups' ? context.observedNewGroupRaces?.length ?? 0 : 0
+    for (let i = added.length; i < attempts; i++) runtime.events.push({
+      type: 'addFailedBoardFull', source: 'potion', round: state.round,
+    })
+  }
+  if (effect.type === 'mergeSelected' && added.length) runtime.events.push({ type: 'fusionCompleted', source: 'potion', round: state.round })
+  for (const m of activeGroups(state)) {
+    const old = before.monsters.find(s => s.id === m.id)
+    if (old?.race && !added.some(a => a.id === m.id) && (old.race !== m.race || old.rarity !== m.rarity
+      || (old.specialIdentity === 'hollow-cocoon' && m.specialIdentity !== 'hollow-cocoon')))
+      runtime.events.push({ type: 'mutationCompleted', source: 'potion', round: state.round, slotId: m.id,
+        before: asPlannerMonster(old, runtime.instances[m.id]), after: asPlannerMonster(m, runtime.instances[m.id]) })
+  }
+}
+
 function applyPersistentRemovalTrigger(
   state: GameState,
   source: GameState,
@@ -551,7 +596,7 @@ function applyPersistentRemovalTrigger(
   warnings: string[],
 ): void {
   const triggerCards = persistentCardsIn(persistent).filter(
-    (item) => item.onRemovalQuantityBonus,
+    (item) => item.onRemovalQuantityBonus && !item.sharedRules,
   )
   for (const persistentCard of triggerCards) {
     const trigger = persistentCard.onRemovalQuantityBonus!
@@ -616,7 +661,7 @@ function expectedOnAddAdjustment(
 ): { bonus: number; analysis: string[]; warning?: string } {
   if (runtime.addedGroups.length === 0) return { bonus: 0, analysis: [] }
   const mutationCards = persistentCardsIn(persistent).filter(
-    (card) => card.onAddGroupExpectedMutation,
+    (card) => card.onAddGroupExpectedMutation && !card.sharedRules,
   )
   if (mutationCards.length === 0) return { bonus: 0, analysis: [] }
 
@@ -637,7 +682,7 @@ function expectedOnAddAdjustment(
           group.race = mutation.toRace
           group.unitActivity += mutation.unitActivityBonus
           const actual = state.monsters.find(monster => monster.id === group.id)
-          if (actual) { actual.race = group.race; actual.unitActivity = group.unitActivity }
+          if (actual) { actual.race = group.race; actual.unitActivity = group.unitActivity; actual.specialIdentity = 'ordinary' }
           observedMutationEvents += 1
           analysis.push(
             `${card.name}实际触发：${group.id.replace('slot-', '槽位 ')}变异为` +
@@ -661,7 +706,7 @@ function expectedOnAddAdjustment(
     )
   }
   const mutationBonusCards = persistentCardsIn(persistent).filter(
-    (card) => card.onMutationActivityBonus,
+    (card) => card.onMutationActivityBonus && !card.sharedRules,
   )
   for (const card of mutationBonusCards) {
     const mutationBonus = card.onMutationActivityBonus!
@@ -707,20 +752,42 @@ function evaluateCardInternal(
   includeRoundEndProjection = true,
 ): EvaluationResult {
   if (card.evaluationUnavailable) throw new Error(`${card.name}尚未量化，不能把未知效果作为零收益结算`)
+  if (card.confirmedPotion) return evaluateConfirmedPotion(source, card, persistent, context)
   if (!canEvaluateCard(source, card)) throw new Error(`${card.name}需要先确认新增蛊虫的基础参数`)
   if (card.projection) return projectPotion(source, card, persistent, context,
     (variant, observed) => evaluateCardInternal(source, variant, persistent, observed, includeRoundEndProjection))
-  const state = cloneState(source)
+  let state = cloneState(source)
   const before = totalActivity(state)
   const trace: string[] = []
   const warnings: string[] = []
   if (card.modelWarning) trace.push(`模型边界：${card.modelWarning}`)
-  const runtime: ResolutionRuntime = { removedGroups: [], addedGroups: [] }
+  const runtime: ResolutionRuntime = { removedGroups: [], addedGroups: [], events: [], instances: {}, nextInstance: 0 }
 
   for (const effect of card.effects) {
     applyEffect(state, effect, persistent, trace, warnings, context, runtime)
   }
   applyPersistentRemovalTrigger(state, source, card, persistent, runtime, context, trace, warnings)
+  const rawAfterCard = state
+  const passiveEvents = previewPassives(state, persistent, runtime.events, runtime.instances, context)
+  let eventUncertain = Boolean(passiveEvents.unavailable)
+  if (runtime.events.length && usesSharedPassives(persistent)) {
+    const unique = new Set(passiveEvents.outcomes.map(o => stateSignature(o.state)))
+    eventUncertain ||= !passiveEvents.exhaustive || unique.size !== 1
+    warnings.push(...passiveEvents.warnings)
+    if (passiveEvents.exhaustive && passiveEvents.outcomes.length) {
+      state = cloneState(rawAfterCard)
+      // Keep separately proven fields (e.g. claw quantity) even when spinal mutation is random.
+      for (const group of state.monsters) {
+        const variants = passiveEvents.outcomes.map(o => o.state.monsters.find(m => m.id === group.id))
+        if (variants.some(v => !v) || new Set(variants.map(v => Boolean(v!.race))).size !== 1) continue
+        for (const field of ['race', 'rarity', 'quantity', 'unitActivity'] as const) {
+          if (new Set(variants.map(v => v![field])).size === 1) Object.assign(group, { [field]: variants[0]![field] })
+        }
+      }
+      trace.push(`常驻事件链结算（${persistentCardsIn(persistent).filter(p => p.sharedRules).map(p => p.name).join('、')}）：已确定活性 ${totalActivity(rawAfterCard)} → ${totalActivity(state)}`)
+    }
+    if (eventUncertain) warnings.push('常驻事件是概率事件，预测仅参与参考评分，实际局面等待 F8 同步')
+  }
 
   for (const persistentCard of persistentCardsIn(persistent)) {
     if (persistentCard.singleRaceFinalMultiplier && activeRaceIds(state).length === 1) {
@@ -754,12 +821,16 @@ function evaluateCardInternal(
     ? evaluateRoundEndTransition(source, persistent)
     : { bonus: 0, analysis: [] }
   const transitionAfter = includeRoundEndProjection
-    ? evaluateRoundEndTransition(state, persistent)
+    ? eventUncertain && usesSharedPassives(persistent)
+      ? sharedProjection(state, persistent, previewPassives(rawAfterCard, persistent,
+          [...runtime.events, { type: 'roundEnd', source: 'round', round: state.round }], runtime.instances, context))
+      : evaluateRoundEndTransition(state, persistent)
     : { bonus: 0, analysis: [] }
   const beforeBonus = transitionBefore.activityBonus ?? 0
   const afterBonus = transitionAfter.activityBonus ?? 0
   const hasSettlement = includeRoundEndProjection && persistentCardsIn(persistent)
-    .some(item => item.roundEndEffect || item.roundEndQuantityPerRaceGroup)
+    .some(item => item.sharedRules || item.roundEndEffect || item.roundEndQuantityPerRaceGroup)
+  const unavailable = passiveEvents.unavailable || transitionBefore.unavailable || transitionAfter.unavailable
   const settlementDetails = hasSettlement ? [
     `常驻本轮结算：保留局面 ${beforeBonus >= 0 ? '+' : ''}${beforeBonus} → 选牌后 ${afterBonus >= 0 ? '+' : ''}${afterBonus}，变化 ${afterBonus - beforeBonus >= 0 ? '+' : ''}${afterBonus - beforeBonus}`,
     ...transitionAfter.analysis,
@@ -782,6 +853,8 @@ function evaluateCardInternal(
       : '战略评分'
 
   return {
+    ...(unavailable ? { modelUnavailable: unavailable } : {}),
+    ...(eventUncertain ? { requiresOutcomeSync: true } : {}),
     card,
     state,
     activityBefore: before,
@@ -791,10 +864,11 @@ function evaluateCardInternal(
     scoreDelta: score - scoreBefore,
     scoreLabel,
     ...(hasSettlement ? { settlement: {
+      ...(unavailable ? { unavailable } : {}),
       uncertain: persistentCardsIn(persistent).some(item =>
         item.roundEndQuantityPerRaceGroup || item.roundEndEffect?.targeting?.mode === 'observedRandom' ||
         item.onAddGroupExpectedMutation || item.onRemovalQuantityBonus) ||
-        persistentCardsIn(persistent).filter(item => item.roundEndEffect).length > 1,
+        persistentCardsIn(persistent).filter(item => item.roundEndEffect).length > 1 || eventUncertain || Boolean(unavailable) || Boolean(transitionAfter.uncertain),
       beforeBonus, afterBonus, change: afterBonus - beforeBonus,
       projectedActivity: after + afterBonus,
       details: settlementDetails,
@@ -982,6 +1056,8 @@ export function evaluateRoundEndTransition(
   state: GameState,
   persistent: PersistentLoadout,
 ): RoundEndTransitionProjection {
+  if (usesSharedPassives(persistent)) return sharedProjection(state, persistent, previewPassives(state, persistent,
+    [{ type: 'roundEnd', source: 'round', round: state.round }]))
   const roundEndCards = persistentCardsIn(persistent)
     .filter((card) => card.roundEndEffect || card.roundEndQuantityPerRaceGroup)
   // This pair has a bounded, fully enumerated interaction. Other combinations
@@ -1005,6 +1081,24 @@ export function evaluateRoundEndTransition(
       ...(roundEndCards.length > 1 ? ['模型边界：多张回合结束常驻暂按同一选牌后局面独立投射，触发顺序及相互连锁尚未量化；以上不是完整组合期望。'] : []),
     ],
   }
+}
+
+function sharedProjection(state: GameState, loadout: PersistentLoadout, preview: PassivePreview): RoundEndTransitionProjection {
+  if (preview.unavailable) return { bonus: 0, activityBonus: 0, unavailable: preview.unavailable, uncertain: true,
+    analysis: [`常驻结算待补数据：${preview.unavailable}；零占位值不代表真实零收益，暂停完整推荐`] }
+  const before = evaluateStrategicState(state, loadout)
+  const values = preview.outcomes.map(o => {
+    const after = evaluateStrategicState(o.state, loadout)
+    return { activity: totalActivity(o.state) - totalActivity(state),
+      bonus: after.baseValue - before.baseValue + Math.max(0, before.groupCount - after.groupCount) * futureEmptySlotValue }
+  })
+  const activityBonus = Math.min(...values.map(v => v.activity))
+  const maximum = Math.max(...values.map(v => v.activity))
+  return { bonus: Math.min(...values.map(v => v.bonus)), activityBonus,
+    uncertain: !preview.exhaustive || maximum !== activityBonus,
+    analysis: [`回合结束转移收益 ${activityBonus >= 0 ? '+' : ''}${activityBonus}（${persistentCardsIn(loadout).filter(p => p.sharedRules).map(p => p.name).join('、')}）`,
+      `常驻事件链：${preview.exhaustive ? '枚举' : '抽样'} ${values.length} 个结果，活性变化 ${activityBonus}–${maximum}`,
+      ...preview.warnings] }
 }
 
 function combinations<T>(items: T[], count: number): T[][] {
@@ -1180,6 +1274,7 @@ export function rankCards(
       const best = results[0]
       return {
         ...best.result,
+        modelUnavailable: results.find(item => item.result.modelUnavailable)?.result.modelUnavailable,
         recommendedTargetIds: best.targetIds,
         analysis: [
           `已比较 ${targetSets.length} 种合法目标组合`,

@@ -30,8 +30,14 @@ function bruteForceBestValues(
 }
 
 describe('redraw estimate', () => {
+  it('does not treat missing passive model data as zero redraw value', () => {
+    const state = { ...initialState, round: 2 }
+    const estimate = estimateRedraw(state, candidateCards, persistentCards.find(p => p.id === 'plague-madonna')!, 3, 100)
+    expect(estimate.unavailable).toContain('缺少结算数据')
+    expect(estimate.sampleCount).toBe(0)
+  })
   it('matches brute-force enumeration without materializing every hand', () => {
-    const pool = candidateCards.slice(0, 8)
+    const pool = candidateCards.filter(c=>!c.confirmedPotion).slice(0, 8)
     const currentBest = 100
     const exact = estimateRedraw(initialState, pool, persistentCards[0], 3, currentBest)
     const bruteForce = bruteForceBestValues(pool, 3, currentBest)

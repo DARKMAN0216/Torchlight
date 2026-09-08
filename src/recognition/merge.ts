@@ -2,7 +2,7 @@ import { rarityIds, type CandidateCard, type GameState } from '../types/game'
 import type { PersistentCard } from '../types/game'
 import type { RecognitionScreenPhase, RecognitionSnapshot, RecognizedValue } from './contracts'
 import { validateRecognitionConsistency } from './validation'
-import { monsterDictionary, resolveMonsterName, type MonsterNameEntry } from './monsterDictionary'
+import { monsterDictionary, normalizeMonsterName, resolveMonsterName, type MonsterNameEntry } from './monsterDictionary'
 
 const confidenceThreshold = 0.72
 const candidatePhases = new Set<RecognitionScreenPhase>([
@@ -18,7 +18,7 @@ const persistentChoicePhases = new Set<RecognitionScreenPhase>([
 export interface RecognitionMergeResult {
   state: GameState
   candidateIds: string[]
-  offerCount: 3 | 5
+  offerCount: 3 | 4 | 5
   phase: RecognitionScreenPhase
   appliedFieldCount: number
   matchedCandidateCount: number
@@ -111,7 +111,7 @@ export function matchPersistentName(
 export function mergeRecognitionSnapshot(
   currentState: GameState,
   currentCandidateIds: string[],
-  currentOfferCount: 3 | 5,
+  currentOfferCount: 3 | 4 | 5,
   snapshot: RecognitionSnapshot,
   catalog: readonly CandidateCard[],
   persistentCatalog: readonly PersistentCard[] = [],
@@ -167,7 +167,9 @@ export function mergeRecognitionSnapshot(
         return monster
       }
       if (!alreadyEmpty || monster.rarity !== 'common') appliedFieldCount += 4
-      return { ...monster, race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 }
+      const empty = { ...monster, race: null, rarity: 'common' as const, quantity: 0, unitActivity: 0 }
+      delete empty.specialIdentity
+      return empty
     }
 
     const next = { ...monster }
@@ -201,6 +203,14 @@ export function mergeRecognitionSnapshot(
     if (!next.race && (next.quantity > 0 || next.unitActivity > 0)) {
       warnings.push(`${monster.id} 已识别数值但种群未知，保留为空槽等待人工确认`)
     }
+    // Re-establish identity from this observation, never from a stale occupant.
+    delete next.specialIdentity
+    if (next.race === 'swarm' && next.rarity === 'boss') {
+      next.specialIdentity = recognizedSlot.name && recognizedSlot.name.confidence >= 0.85
+        && dictionary.has(normalizeMonsterName(recognizedSlot.name.value))
+        ? normalizeMonsterName(recognizedSlot.name.value) === '空心茧' ? 'hollow-cocoon' : 'ordinary'
+        : 'unknown'
+    }
     return next
   })
 
@@ -213,7 +223,7 @@ export function mergeRecognitionSnapshot(
   const confirmedCandidateIds: string[] = []
   const unmatchedCandidateNames: string[] = []
   const names = snapshot.candidateCardNames ?? []
-  if (candidatePhases.has(phase) && (names.length === 3 || names.length === 5)) {
+  if (candidatePhases.has(phase) && (names.length === 3 || names.length === 4 || names.length === 5)) {
     offerCount = names.length
     candidateIds = [...currentCandidateIds]
     for (let index = 0; index < names.length; index += 1) {
@@ -244,7 +254,7 @@ export function mergeRecognitionSnapshot(
   } else if (names.length > 0 && !candidatePhases.has(phase)) {
     warnings.push(`识别到 ${names.length} 张非药剂卡，未覆盖当前候选牌`)
   } else if (candidatePhases.has(phase)) {
-    warnings.push(`只识别到 ${names.length} 个卡名，尚未形成完整的三卡或五卡候选；请重新截图或手动录入`)
+    warnings.push(`只识别到 ${names.length} 个卡名，尚未形成完整的三、四或五卡候选；请重新截图或手动录入`)
   }
 
   return {

@@ -11,6 +11,7 @@ export function StartupAdvice({ state, loadout, cards, ranking, compact = false 
   const race = raceLabels[need.race]
   const paths = ranking.filter(r => r.startup?.maximumGroups)
   const unknown = cards.flatMap(card => {
+    if (card.confirmedPotion && ranking.some(r => r.card.id === card.id && !r.modelUnavailable)) return []
     const plan = replacementExploration(state, card, need.race)
     return plan ? [{ card, plan }] : []
   })

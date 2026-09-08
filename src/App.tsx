@@ -12,6 +12,8 @@ import { estimateRedraw } from './engine/redraw'
 import { readUserData, saveUserData } from './storage/userData'
 import { canEvaluateCard } from './engine/cardAvailability'
 import { NewbornSwarmSettings } from './components/NewbornSwarmSettings'
+import { PersistentModelSettings } from './components/PersistentModelSettings'
+import { confirmedRoundEnd, usesSharedPassives } from './engine/sharedPassives'
 import { evaluateCard, rankCards, totalActivity } from './engine/evaluate'
 import { applyOpportunityPolicy } from './engine/opportunity'
 import { persistentCardsIn, persistentLoadoutName } from './engine/persistent'
@@ -61,7 +63,7 @@ interface SavedWorkspace {
   state: GameState
   persistentIds: string[]
   candidateIds: string[]
-  offerCount: 3 | 5
+  offerCount: 3 | 4 | 5
   rerollsRemaining?: number
   awaitingEndRound?: boolean
 }
@@ -70,7 +72,7 @@ interface LegacyV3Workspace {
   state: GameState
   persistentId: string
   candidateIds: string[]
-  offerCount: 3 | 5
+  offerCount: 3 | 4 | 5
   awaitingEndRound?: boolean
 }
 
@@ -78,7 +80,7 @@ interface HistoryEntry {
   state: GameState
   awaitingEndRound: boolean
   candidateIds: string[]
-  offerCount: 3 | 5
+  offerCount: 3 | 4 | 5
   rerollsRemaining: number
 }
 
@@ -94,7 +96,7 @@ interface LegacyWorkspace {
   }
   persistentId: string
   candidateIds: string[]
-  offerCount: 3 | 5
+  offerCount: 3 | 4 | 5
 }
 
 interface LegacyV2Workspace extends Omit<LegacyV3Workspace, 'state'> {
@@ -272,7 +274,7 @@ function App() {
   const [candidateIds, setCandidateIds] = useState<string[]>(
     () => saved?.candidateIds ?? initialCandidateIds,
   )
-  const [offerCount, setOfferCount] = useState<3 | 5>(() => saved?.offerCount ?? 3)
+  const [offerCount, setOfferCount] = useState<3 | 4 | 5>(() => saved?.offerCount ?? 3)
   const [rerollsRemaining, setRerollsRemaining] = useState(
     () => saved?.rerollsRemaining ?? 3,
   )
@@ -573,6 +575,20 @@ function App() {
       observedRemovedMonsterIds: removedMonsterIds,
       observedPersistentTriggerTargetIds: persistentTriggerTargetIds,
     })
+    if (result.modelUnavailable || result.requiresOutcomeSync) {
+      setStatus(result.modelUnavailable ?? '常驻随机结果尚未确认，请在游戏操作后按 F8 同步')
+      return
+    }
+    if (usesSharedPassives(persistentLoadout)) {
+      const settled = confirmedRoundEnd(result.state, persistentLoadout)
+      if (!settled.state) { setStatus(settled.reason ?? '请按 F8 同步实际结果'); return }
+      setHistory(current => [...current,{state,awaitingEndRound,candidateIds,offerCount,rerollsRemaining}])
+      setState({ ...settled.state,round:state.round+1 })
+      setAwaitingEndRound(false); setPendingResolution(null); setSelectedMonsterIds([])
+      setObservedRaceByMonsterId({}); setObservedNewGroupRaces([]); resetObservedResolution()
+      setStatus(`已结算“${card.name}”及全部可确定常驻效果，请录入下一轮候选卡`)
+      return
+    }
     setHistory((current) => [...current, { state, awaitingEndRound, candidateIds, offerCount, rerollsRemaining }])
     setState({ ...result.state, round: roundEndDue ? state.round : state.round + 1 })
     setAwaitingEndRound(roundEndDue)
@@ -626,6 +642,7 @@ function App() {
   }
 
   const applyRecommendation = () => {
+    if (ranking.some(item => item.modelUnavailable)) { setStatus('常驻模型数据不足，暂不能应用推荐'); return }
     const best = ranking[0]
     if (best) beginApplyCard(best.card.id, best.recommendedTargetIds)
   }
@@ -722,6 +739,14 @@ function App() {
   }
 
   const applyRoundEnd = (targetIds: string[] = []) => {
+    if (awaitingEndRound && usesSharedPassives(persistentLoadout)) {
+      const settled=confirmedRoundEnd(state,persistentLoadout)
+      if (!settled.state) { setStatus(settled.reason ?? '请按 F8 同步'); return }
+      setHistory(current=>[...current,{state,awaitingEndRound,candidateIds,offerCount,rerollsRemaining}])
+      setState({...settled.state,round:state.round+1}); setAwaitingEndRound(false)
+      setPendingResolution(null); setSelectedMonsterIds([]); setStatus('已按统一事件链结算全部常驻')
+      return
+    }
     if (!roundEndCard || !awaitingEndRound) return
     const result = evaluateCard(state, roundEndCard, persistentLoadout, {
       selectedMonsterIds: targetIds,
@@ -746,6 +771,7 @@ function App() {
   }
 
   const beginRoundEnd = () => {
+    if (awaitingEndRound && usesSharedPassives(persistentLoadout)) { applyRoundEnd(); return }
     if (!roundEndCard || !awaitingEndRound) return
     if (!roundEndCard.targeting) {
       applyRoundEnd()
@@ -862,6 +888,8 @@ function App() {
     setPersistentIds((current) => current.includes(id)
       ? current
       : [...current.filter((item) => item !== 'none'), id])
+    if (!persistentIds.includes(id)) setState(current=>({...current,
+      persistentAcquiredRounds:{...current.persistentAcquiredRounds,[id]:current.round}}))
     setPersistentOffers([])
     setStatus(`已选择“${card.name}”并追加为常驻手术用具；收益从后续回合开始计算`)
   }
@@ -900,6 +928,7 @@ function App() {
     }
     const newGame = Boolean(follow?.enabled && snapshot.round && snapshot.round.confidence >= .85 && snapshot.round.value < state.round)
     if (newGame) {
+      setState(current => ({ ...current, persistentAcquiredRounds: {} }))
       setPersistentIds(['none'])
       setRerollsRemaining(3)
       setHistory([])
@@ -943,6 +972,15 @@ function App() {
     if (next.changed) {
       setChoiceLog(next.log)
       setPersistentIds(next.ids)
+      setState(current => {
+        const acquired = {...current.persistentAcquiredRounds}
+        for (const record of next.log) {
+          const card=choicePermanent(record,persistentCards)
+          if (card && !persistentIds.includes(card.id) && record.status==='transition-observed' && record.round<=current.round && record.round>=1)
+            acquired[card.id] ??= record.round
+        }
+        return {...current,persistentAcquiredRounds:acquired}
+      })
     }
   }
 
@@ -950,6 +988,8 @@ function App() {
     recorder.recordChoice({ ...record, status: 'manual' })
     const card = choicePermanent(record, persistentCards)
     if (card) setPersistentIds(current => [...new Set([...current.filter(id => id !== 'none'), card.id])])
+    if (card && !persistentIds.includes(card.id) && record.round<=state.round && record.round>=1)
+      setState(current=>({...current,persistentAcquiredRounds:{...current.persistentAcquiredRounds,[card.id]:record.round}}))
     setChoiceLog(current => current.map(r => r.id === record.id ? { ...r, status: 'manual' } : r))
     setStatus(card ? `已人工确认并追加常驻：${card.name}` : '已记录实际选择；未模拟执行药剂，怪物仍以 F8 为准')
   }
@@ -1151,6 +1191,7 @@ function App() {
         <div className="settings-banner">
           <strong>当前估算假设</strong>
           <NewbornSwarmSettings value={state.newbornSwarm} onChange={(newbornSwarm) => setState(current => ({ ...current, newbornSwarm }))} />
+          <PersistentModelSettings value={state.persistentModel} onChange={persistentModel => setState(current => ({ ...current, persistentModel }))} />
           <span>F8 仅截图一次。选牌监听只处理当前游戏前台的左键点击，记录当前一手；刷新/药箱后重新 F8。未捕获确认（如键盘确认）时请人工核对。</span>
           <span>当前常驻组合：{persistentLoadoutName(persistentLoadout)}。手术用具按追加关系共同参与评分。</span>
           <span>重抽来自完整示例牌库、等概率、同一批不重复。真实规则录入后可替换。</span>
@@ -1193,6 +1234,10 @@ function App() {
               <PersistentRecommendation offers={persistentOffers} ranking={persistentOfferRanking} />
             ) : recognitionPhase === 'surgeryPlanSelection' ? (
               <div className="floating-recommendation"><strong>手术方案由你决定</strong><p>{state.round > 10 ? '已跳过手术方案，等待下一次药剂候选。' : '回合未超过 10，请核对阶段识别。'}</p></div>
+            ) : ranking.some(item => item.modelUnavailable) ? (
+              <div className="floating-recommendation"><strong>药剂/常驻结算需要补充数据</strong>
+                {[...new Set(ranking.flatMap(item => item.modelUnavailable ? [item.modelUnavailable] : []))].map(message => <p key={message}>{message}</p>)}
+              </div>
             ) : ranking[0] ? (
               <div className="floating-recommendation">
                 <span>{candidateWarning ? '可计算卡牌中的参考推荐' : '当前推荐'}</span>
@@ -1307,7 +1352,7 @@ function App() {
                         <>
                           <p>{card.description}</p>
                           {card.modelWarning && <p>{card.modelWarning}</p>}
-                          <strong>{result?.scoreDelta && result.scoreDelta > 0
+                          <strong>{result?.modelUnavailable ? `需要补充数据：${result.modelUnavailable}` : result?.scoreDelta && result.scoreDelta > 0
                             ? `后续战略评分 +${Math.round(result.scoreDelta)}`
                             : '暂无可确认的后续收益'}</strong>
                           <button
@@ -1335,12 +1380,12 @@ function App() {
                 <p>选择每个槽位实际出现的卡牌，结果会立即重算</p>
               </div>
               <div className="offer-switch" aria-label="候选卡数量">
-                {[3, 5].map((count) => (
+                {([3, 4, 5] as const).map((count) => (
                   <button
                     type="button"
                     key={count}
                     className={offerCount === count ? 'selected' : ''}
-                    onClick={() => setOfferCount(count as 3 | 5)}
+                    onClick={() => setOfferCount(count)}
                   >
                     {count} 张
                   </button>
@@ -1359,7 +1404,7 @@ function App() {
                     card={card}
                     cards={candidateCards}
                     result={result}
-                    recommended={ranking[0]?.card.id === card.id}
+                    recommended={!ranking.some(item => item.modelUnavailable) && ranking[0]?.card.id === card.id}
                     pending={pendingResolution?.kind === 'candidate' && pendingResolution.cardId === card.id}
                     disabled={awaitingEndRound || Boolean(follow?.enabled)}
                     following={Boolean(follow?.enabled)}
